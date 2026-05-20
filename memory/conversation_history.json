@@ -1,0 +1,15 @@
+[
+  {
+    "date": "2026-05-15 20:58",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Da me informa zioni de to t más actualizaciones."
+      },
+      {
+        "role": "jarvis",
+        "text": "No tengo un registro de \"actualizaciones\" como tal, Sergio. Mis capacidades como asistente técnico de ingeniería se centran en electrónica, sistemas, software y mecatrónica, incluyendo cálculos, búsqueda de datasheets, desarrollo de código y control del sistema. ¿Hay alguna tarea específica en la que pueda ayudarte?"
+      }
+    ]
+  }
+]
