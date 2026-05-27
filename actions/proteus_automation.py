@@ -1,66 +1,94 @@
-# ====================================================================
-# SCRIPT: proteus_automation.py
-# DESCRIPCIÓN: Control determinista de carga y simulación en Proteus VSM
-# ====================================================================
-
+# actions/proteus_automation.py
 import os
 import time
 import subprocess
 import pyautogui
 import ctypes
 
-def inicializar_entorno():
-    """Configura las variables de seguridad y entorno de interfaz en Windows 11."""
-    # 1. Forzar conciencia de DPI (DPI Awareness) para mitigar errores de coordenadas por escalado
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2) # PROCESS_PER_MONITOR_DPI_AWARE
-        print("[INFO] Conciencia de DPI configurada exitosamente.")
-    except Exception as e:
-        print(f"[ADVERTENCIA] No se pudo establecer la conciencia de DPI: {e}")
+def proteus_automation(parameters: dict, player=None, speak=None):
+    action = parameters.get("action", "simulate").lower().strip()
+    dsn_path = parameters.get("dsn_path", "").strip()
+    exe_path = parameters.get("exe_path", "").strip()
+    duration = float(parameters.get("duration", 12.0))
 
-    # 2. Protocolo de seguridad FailSafe
-    pyautogui.FAILSAFE = True  # Mover el cursor a la esquina superior izquierda detiene el script de inmediato
-    pyautogui.PAUSE = 1.2      # Retardo estándar (segundos) entre instrucciones GUI
+    def log(msg):
+        if player:
+            player.write_log(f"PROT: {msg}")
 
-def ejecutar_simulacion_proteus(ruta_exe, ruta_proyecto):
-    """Lanza la instancia de Proteus, maximiza, simula mediante atajos nativos y cierra."""
-    if not os.path.exists(ruta_exe):
-        print(f"[ERROR] Ejecutable de Proteus no hallado en la ruta: {ruta_exe}")
-        return
+    def say(msg):
+        if speak:
+            speak(msg)
+        log(msg)
 
-    print("[INFO] Iniciando instancia de Proteus VSM con archivo de diseño...")
-    # Lanza Proteus inyectando el archivo de circuito como argumento de línea de comandos
-    subprocess.Popen([ruta_exe, ruta_proyecto])
+    # Rutas por defecto del sistema si no se especifican
+    if not exe_path:
+        exe_path = r"C:\Program Files (x86)\Labcenter Electronics\Proteus 8 Professional\BIN\PDS.EXE"
     
-    # Tiempo de espera crítico para la inicialización del entorno gráfico
-    time.sleep(6.0)
+    if not dsn_path:
+        # Intenta buscar un circuito por defecto en el escritorio de Sergio
+        desktop_dir = os.path.join(os.path.expanduser("~"), "Desktop")
+        dsn_path = os.path.join(desktop_dir, "Circuito_Mixto.DSN")
 
-    print("[INFO] Maximizando ventana principal de Proteus...")
-    # Atajo nativo del sistema operativo para maximizar la ventana activa
-    pyautogui.hotkey('alt', 'space')
-    pyautogui.press('x')
-    time.sleep(1.5)
+    if not os.path.exists(exe_path):
+        msg = f"No se encontró el ejecutable de Proteus en la ruta especificada: {exe_path}"
+        say(msg)
+        return msg
 
-    print("[INFO] Enviando pulso de ejecución al motor de simulación (F12)...")
-    # F12 es el shortcut nativo de Proteus para iniciar el procesamiento analógico/digital
-    pyautogui.press('f12')
-    
-    # Ventana de tiempo establecida para evaluar la ejecución del circuito
-    print("[INFO] Simulación activa. Ejecutando telemetría por 12 segundos...")
-    time.sleep(12.0)
+    if not os.path.exists(dsn_path):
+        msg = f"No se encontró el archivo de diseño de circuito (.DSN) en: {dsn_path}"
+        say(msg)
+        return msg
 
-    print("[INFO] Enviando pulso de detención de simulación (ESC)...")
-    pyautogui.press('escape')
-    time.sleep(1.5)
+    if action == "simulate":
+        say(f"Iniciando simulación de Proteus para {os.path.basename(dsn_path)}, Sergio.")
+        
+        # 1. DPI Awareness para evitar errores de coordenadas
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            log("Conciencia de DPI configurada.")
+        except Exception as e:
+            log(f"Error en DPI: {e}")
 
-    print("[INFO] Cerrando la aplicación de manera limpia (Alt+F4)...")
-    pyautogui.hotkey('alt', 'f4')
+        # 2. Configurar PyAutoGUI
+        pyautogui.FAILSAFE = True
+        pyautogui.PAUSE = 1.2
 
-if __name__ == "__main__":
-    inicializar_entorno()
-    
-    # AJUSTE DE RUTAS: Defina las rutas reales según su entorno local
-    RUTA_PROTEUS_EXE = r"C:\Program Files (x86)\Labcenter Electronics\Proteus 8 Professional\BIN\PDS.EXE"
-    RUTA_PROYECTO_DSN = r"C:\Users\Sergio\Desktop\Circuito_Mixto.DSN"
-    
-    ejecutar_simulacion_proteus(RUTA_PROTEUS_EXE, RUTA_PROYECTO_DSN)
+        try:
+            # Lanza Proteus con el archivo del circuito
+            proc = subprocess.Popen([exe_path, dsn_path])
+            time.sleep(6.0) # Espera crítica de renderizado
+
+            # Maximiza
+            pyautogui.hotkey('alt', 'space')
+            pyautogui.press('x')
+            time.sleep(1.5)
+
+            # Ejecutar Simulación (F12 en Proteus)
+            log("Enviando comando de simulación (F12)...")
+            pyautogui.press('f12')
+            
+            # Espera de simulación activa
+            log(f"Simulación corriendo durante {duration} segundos...")
+            time.sleep(duration)
+
+            # Detener Simulación (ESC en Proteus)
+            log("Deteniendo simulación (ESC)...")
+            pyautogui.press('escape')
+            time.sleep(1.5)
+
+            # Cerrar limpio (Alt+F4)
+            log("Cerrando Proteus...")
+            pyautogui.hotkey('alt', 'f4')
+            
+            result = f"Simulación de {os.path.basename(dsn_path)} finalizada correctamente."
+            say(result)
+            return result
+
+        except Exception as e:
+            msg = f"Ocurrió un error al automatizar Proteus: {e}"
+            say(msg)
+            return msg
+    else:
+        msg = f"Acción de Proteus no reconocida: {action}"
+        say(msg)
+        return msg

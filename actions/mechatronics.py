@@ -229,6 +229,136 @@ def mechatronics(parameters: dict, player=None, speak=None):
         say(result)
         return result
 
+    # ── Sintonización de PID (Simulación) ────────────────────────
+    elif action == "pid_tuning":
+        kp = float(parameters.get("kp", 1.0))
+        ki = float(parameters.get("ki", 0.0))
+        kd = float(parameters.get("kd", 0.0))
+        setpoint = float(parameters.get("setpoint", 1.0))
+        duration = float(parameters.get("duration", 5.0))
+        dt = float(parameters.get("dt", 0.02))
+
+        # Validación básica para evitar loops infinitos o errores numéricos
+        if dt <= 0 or dt > 0.5:
+            dt = 0.02
+        if duration <= 0 or duration > 20.0:
+            duration = 5.0
+        
+        # Modelo de planta de segundo orden: G(s) = 1 / (s^2 + 10s + 20)
+        # Ecuación diferencial: x_ddot + 10*x_dot + 20*x = u
+        x = 0.0
+        x_dot = 0.0
+        integral = 0.0
+        prev_error = setpoint - x
+        
+        t = 0.0
+        time_points = []
+        x_points = []
+        
+        while t <= duration:
+            error = setpoint - x
+            integral += error * dt
+            # Evitar derivación abrupta en el primer paso
+            derivative = (error - prev_error) / dt if t > 0 else 0.0
+            
+            u = kp * error + ki * integral + kd * derivative
+            # Satulación de control para mayor realismo
+            u = max(-100.0, min(100.0, u))
+            
+            # Ecuación de la planta
+            x_ddot = u - 10.0 * x_dot - 20.0 * x
+            x_dot += x_ddot * dt
+            x += x_dot * dt
+            
+            time_points.append(t)
+            x_points.append(x)
+            
+            prev_error = error
+            t += dt
+
+        # Análisis de métricas
+        max_x = max(x_points)
+        overshoot = max(0.0, (max_x - setpoint) / setpoint * 100.0) if setpoint != 0 else 0.0
+        final_x = x_points[-1]
+        sse = abs(setpoint - final_x)
+        
+        # Tiempo de establecimiento (settling time) al 2%
+        settling_time = "No se estabilizó"
+        for idx in range(len(x_points) - 1, -1, -1):
+            if abs(x_points[idx] - setpoint) > 0.02 * abs(setpoint if setpoint != 0 else 1.0):
+                if idx < len(x_points) - 1:
+                    settling_time = f"{time_points[idx+1]:.2f} s"
+                break
+        else:
+            settling_time = "0.00 s"
+
+        # Graficar simplificado en texto
+        graph = []
+        steps = 15
+        step_sz = len(x_points) // steps
+        for i in range(steps):
+            idx = min(i * step_sz, len(x_points) - 1)
+            pct = x_points[idx] / (max_x if max_x > 0 else 1.0)
+            bar = "█" * int(pct * 20)
+            graph.append(f"{time_points[idx]:.2f}s: {x_points[idx]:.3f} | {bar}")
+
+        result = (
+            f"Simulación PID completa (Planta 2do orden):\n"
+            f"Parámetros: Kp={kp:.2f}, Ki={ki:.2f}, Kd={kd:.2f}\n"
+            f"Overshoot (Sobreimpulso): {overshoot:.2f}%\n"
+            f"Tiempo de Establecimiento (2%): {settling_time}\n"
+            f"Error de estado estacionario (SSE): {sse:.4f}\n"
+            f"Trayectoria de respuesta:\n" + "\n".join(graph)
+        )
+        say(result)
+        return result
+
+    # ── Cinemática Inversa 2R Planar ────────────────────────────
+    elif action == "cinematica_inversa":
+        x = float(parameters.get("x", 0.0))
+        y = float(parameters.get("y", 0.0))
+        l1 = float(parameters.get("l1", 1.0))
+        l2 = float(parameters.get("l2", 1.0))
+
+        if l1 <= 0 or l2 <= 0:
+            say("Las longitudes de los eslabones l1 y l2 deben ser mayores que 0.")
+            return "Dimensiones inválidas."
+
+        # Ley de cosenos para el ángulo de la segunda articulación
+        cos_theta2 = (x**2 + y**2 - l1**2 - l2**2) / (2.0 * l1 * l2)
+
+        if abs(cos_theta2) > 1.0:
+            result = f"Punto ({x}, {y}) fuera del alcance del brazo robótico (máx reach = {l1+l2})."
+            say(result)
+            return result
+
+        # Configuración codo arriba y codo abajo
+        # Codo abajo (Elbow down) - ángulo theta2 positivo
+        sin_theta2_down = math.sqrt(1.0 - cos_theta2**2)
+        theta2_down = math.atan2(sin_theta2_down, cos_theta2)
+        theta1_down = math.atan2(y, x) - math.atan2(l2 * sin_theta2_down, l1 + l2 * cos_theta2)
+
+        # Codo arriba (Elbow up) - ángulo theta2 negativo
+        sin_theta2_up = -math.sqrt(1.0 - cos_theta2**2)
+        theta2_up = math.atan2(sin_theta2_up, cos_theta2)
+        theta1_up = math.atan2(y, x) - math.atan2(l2 * sin_theta2_up, l1 + l2 * cos_theta2)
+
+        # Convertir a grados
+        t1_d, t2_d = math.degrees(theta1_down), math.degrees(theta2_down)
+        t1_u, t2_u = math.degrees(theta1_up), math.degrees(theta2_up)
+
+        result = (
+            f"Cinemática Inversa 2-DOF Planar para P({x}, {y}) con L1={l1}, L2={l2}:\n"
+            f"▸ Configuración Codo Abajo:\n"
+            f"  - Theta 1 (Hombro): {t1_d:.2f}°\n"
+            f"  - Theta 2 (Codo):   {t2_d:.2f}°\n"
+            f"▸ Configuración Codo Arriba:\n"
+            f"  - Theta 1 (Hombro): {t1_u:.2f}°\n"
+            f"  - Theta 2 (Codo):   {t2_u:.2f}°"
+        )
+        say(result)
+        return result
+
     else:
         say(f"Acción de mecatrónica no reconocida: {action}")
         return f"Acción desconocida: {action}"

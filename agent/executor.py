@@ -242,6 +242,30 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
         from actions.flight_finder import flight_finder
         return flight_finder(parameters=parameters, player=None, speak=speak) or "Done."
 
+    elif tool == "electronics":
+        from actions.electronics import electronics
+        return electronics(parameters=parameters, player=None, speak=speak) or "Done."
+
+    elif tool == "mechatronics":
+        from actions.mechatronics import mechatronics
+        return mechatronics(parameters=parameters, player=None, speak=speak) or "Done."
+
+    elif tool == "datasheet_finder":
+        from actions.datasheet_finder import datasheet_finder
+        return datasheet_finder(parameters=parameters, player=None, speak=speak) or "Done."
+
+    elif tool == "materials_science":
+        from actions.materials_science import materials_science
+        return materials_science(parameters=parameters, player=None, speak=speak) or "Done."
+
+    elif tool == "proteus_automation":
+        from actions.proteus_automation import proteus_automation
+        return proteus_automation(parameters=parameters, player=None, speak=speak) or "Done."
+
+    elif tool == "ltspice_automation":
+        from actions.ltspice_automation import ltspice_automation
+        return ltspice_automation(parameters=parameters, player=None, speak=speak) or "Done."
+
     else:
         print(f"[Executor] ⚠️ Unknown tool '{tool}' — falling back to generated_code")
         return _run_generated_code(f"Accomplish this task: {parameters}", speak=speak)

@@ -5,83 +5,65 @@ import json
 import sys
 import traceback
 from pathlib import Path
-
+import numpy as np
 import sounddevice as sd
 import google.genai as genai
 from google.genai import types
 
 from ui import JarvisUI
-from memory.memory_manager import (
-    load_memory, update_memory, format_memory_for_prompt,
-)
-from memory.conversation_history import (
-    save_session, format_history_for_prompt
-)
+from memory.memory_manager import load_memory, update_memory, format_memory_for_prompt
+from memory.conversation_history import save_session, format_history_for_prompt
 
-from actions.file_processor    import file_processor
-from actions.flight_finder     import flight_finder
-from actions.electronics       import electronics
-from actions.dev_tools         import dev_tools
-from actions.mechatronics      import mechatronics
-from actions.open_app          import open_app
-from actions.weather_report    import weather_action
-from actions.send_message      import send_message
-from actions.reminder          import reminder
+# Módulos de Acciones
+from actions.file_processor import file_processor
+from actions.flight_finder import flight_finder
+from actions.electronics import electronics
+from actions.dev_tools import dev_tools
+from actions.mechatronics import mechatronics
+from actions.open_app import open_app
+from actions.weather_report import weather_action
+from actions.send_message import send_message
+from actions.reminder import reminder
 from actions.computer_settings import computer_settings
-from actions.screen_processor  import screen_process
-from actions.youtube_video     import youtube_video
-from actions.desktop           import desktop_control
-from actions.browser_control   import browser_control
-from actions.file_controller   import file_controller
-from actions.code_helper       import code_helper
-from actions.dev_agent         import dev_agent
-from actions.web_search        import web_search as web_search_action
-from actions.computer_control  import computer_control
-from actions.game_updater      import game_updater
-from actions.dev_tools         import dev_tools
-from actions.mechatronics      import mechatronics
-from actions.datasheet_finder  import datasheet_finder
-
+from actions.screen_processor import screen_process
+from actions.youtube_video import youtube_video
+from actions.desktop import desktop_control
+from actions.browser_control import browser_control
+from actions.file_controller import file_controller
+from actions.code_helper import code_helper
+from actions.dev_agent import dev_agent
+from actions.web_search import web_search as web_search_action
+from actions.computer_control import computer_control
+from actions.game_updater import game_updater
+from actions.datasheet_finder import datasheet_finder
+from actions.materials_science import materials_science
+from actions.proteus_automation import proteus_automation
+from actions.ltspice_automation import ltspice_automation
 
 def get_base_dir():
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
+    if getattr(sys, "frozen", False): return Path(sys.executable).parent
     return Path(__file__).resolve().parent
 
-
-#BASE_DIR        = get_base_dir()
-#API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
-#PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
-#LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
-#CHANNELS            = 1
-#SEND_SAMPLE_RATE    = 16000
-#RECEIVE_SAMPLE_RATE = 24000
-#CHUNK_SIZE          = 1024
-
-# Directorios base y rutas de configuración
-BASE_DIR        = get_base_dir()
-CONFIG_DIR      = BASE_DIR / "config"
-CORE_DIR        = BASE_DIR / "core"
-
+BASE_DIR = get_base_dir()
+CONFIG_DIR = BASE_DIR / "config"
+CORE_DIR = BASE_DIR / "core"
 API_CONFIG_PATH = CONFIG_DIR / "api_keys.json"
-PROMPT_PATH     = CORE_DIR / "prompt.txt"
+PROMPT_PATH = CORE_DIR / "prompt.txt"
+LIVE_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 
-# Configuración del modelo
-LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+# Parámetros de Audio Optimizados
+CHANNELS = 1
+SEND_SAMPLE_RATE = 16_000
+RECEIVE_SAMPLE_RATE = 24_000
+CHUNK_SIZE = 4096  # Estabilidad de búfer reforzada
 
-# Parámetros de audio
-CHANNELS            = 1
-SEND_SAMPLE_RATE    = 16_000   # Hz
-RECEIVE_SAMPLE_RATE = 24_000   # Hz
-CHUNK_SIZE          = 1_024    # muestras
-
-
+def _get_api_key():
+    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f: return json.load(f)["gemini_api_key"]
 
 
 def _get_api_key() -> str:
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)["gemini_api_key"]
-
 
 def _load_system_prompt() -> str:
     try:
@@ -99,6 +81,52 @@ def _clean_transcript(text: str) -> str:
     text = _CTRL_RE.sub("", text)
     text = re.sub(r"[\x00-\x08\x0b-\x1f]", "", text)
     return text.strip()
+
+class JarvisApp:
+    def __init__(self):
+        self.ui = JarvisUI()
+        self.audio_queue = asyncio.Queue()
+        self.is_playing = False
+        self.output_stream = None
+        self.session = None
+
+    def audio_callback(self, outdata, frames, time, status):
+        """Consumo de audio no bloqueante."""
+        try:
+            data = self.audio_queue.get_nowait()
+            if len(data) < len(outdata):
+                outdata[:len(data)] = data
+                outdata[len(data):] = b'\x00' * (len(outdata) - len(data))
+            else:
+                outdata[:] = data[:len(outdata)]
+        except asyncio.QueueEmpty:
+            outdata.fill(0)
+
+    async def _receive_audio(self):
+        try:
+            while True:
+                async for response in self.session.receive():
+                    if response.server_content and response.server_content.model_turn:
+                        for part in response.server_content.model_turn.parts:
+                            if part.inline_data:
+                                audio_bytes = part.inline_data.data
+                                if not self.is_playing or self.output_stream is None:
+                                    self.output_stream = sd.RawOutputStream(
+                                        samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS,
+                                        dtype='int16', blocksize=CHUNK_SIZE, callback=self.audio_callback
+                                    )
+                                    self.output_stream.start()
+                                    self.is_playing = True
+                                await self.audio_queue.put(audio_bytes)
+                    
+                    if response.server_content and response.server_content.turn_complete:
+                        if self.output_stream:
+                            self.output_stream.stop()
+                            self.output_stream.close()
+                            self.output_stream = None
+                        self.is_playing = False
+                        while not self.audio_queue.empty(): self.audio_queue.get_nowait()
+        except Exception as e: print(f"Error: {e}")
 
 TOOL_DECLARATIONS = [
     {
@@ -563,6 +591,138 @@ TOOL_DECLARATIONS = [
         "required": ["component"]
     }
 },
+{
+    "name": "dev_tools",
+    "description": (
+        "Herramientas de ingeniería de software y sistemas. "
+        "Usa para: complejidad Big-O de algoritmos, patrones de diseño, "
+        "estructuras de datos, conversión de bases numéricas, conceptos de redes, "
+        "bases de datos. Ejemplos: 'complejidad de merge sort', 'patrón singleton', "
+        "'convierte 255 de decimal a binario', 'qué es TCP vs UDP'."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "big_o | patron_diseno | estructura_datos | conversion_base | pseudocodigo | redes | base_datos"},
+            "algorithm": {"type": "STRING", "description": "Nombre del algoritmo para big_o"},
+            "pattern": {"type": "STRING", "description": "Nombre del patrón para patron_diseno"},
+            "structure": {"type": "STRING", "description": "Nombre de estructura para estructura_datos"},
+            "value": {"type": "STRING", "description": "Valor para conversión de base"},
+            "from_base": {"type": "INTEGER", "description": "Base origen (2, 8, 10, 16)"},
+            "to_base": {"type": "INTEGER", "description": "Base destino (2, 8, 10, 16)"},
+            "topic": {"type": "STRING", "description": "Tema para redes o base_datos"},
+            "description": {"type": "STRING", "description": "Descripción para pseudocodigo"},
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "mechatronics",
+    "description": (
+        "Resuelve cálculos de mecatrónica e ingeniería mecánica, incluyendo cinemática inversa y sintonización PID. "
+        "Usa para: torque, potencia mecánica, conversión RPM/rad·s⁻¹, "
+        "relaciones de transmisión, cinemática lineal, cinemática inversa de brazo de 2-DOF, sintonización de lazo cerrado PID, "
+        "info de motores DC/servo/stepper/BLDC, sensores (HC-SR04, DHT22, MPU-6050, encoders), Arduino (PWM, I2C, SPI). "
+        "Ejemplos: 'calcula la cinemática inversa para brazo en (10, 5)', 'sintoniza un PID con kp=2, ki=0.5, kd=0.1', "
+        "'potencia de motor a 1500 RPM', 'info del sensor ultrasonico'."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "torque | potencia | rpm_rad | transmision | cinematica | motor_info | sensor_info | arduino | pid_tuning | cinematica_inversa"},
+            "force": {"type": "NUMBER", "description": "Fuerza en Newton"},
+            "distance": {"type": "NUMBER", "description": "Distancia en metros"},
+            "torque": {"type": "NUMBER", "description": "Torque en N·m"},
+            "rpm": {"type": "NUMBER", "description": "Velocidad angular en RPM"},
+            "rad_s": {"type": "NUMBER", "description": "Velocidad angular en rad/s"},
+            "velocity": {"type": "NUMBER", "description": "Velocidad lineal en m/s"},
+            "teeth_input": {"type": "INTEGER", "description": "Dientes engranaje entrada"},
+            "teeth_output": {"type": "INTEGER", "description": "Dientes engranaje salida"},
+            "rpm_input": {"type": "NUMBER", "description": "RPM de entrada para transmision"},
+            "v0": {"type": "NUMBER", "description": "Velocidad inicial m/s"},
+            "vf": {"type": "NUMBER", "description": "Velocidad final m/s"},
+            "acceleration": {"type": "NUMBER", "description": "Aceleración m/s²"},
+            "time": {"type": "NUMBER", "description": "Tiempo en segundos"},
+            "motor_type": {"type": "STRING", "description": "dc | paso a paso | servo | bldc"},
+            "sensor_type": {"type": "STRING", "description": "ultrasonico | temperatura | infrarrojo | acelerometro | encoder"},
+            "topic": {"type": "STRING", "description": "Tema Arduino: pwm | i2c | spi | interrupcion | watchdog"},
+            "kp": {"type": "NUMBER", "description": "Ganancia proporcional Kp para PID"},
+            "ki": {"type": "NUMBER", "description": "Ganancia integral Ki para PID"},
+            "kd": {"type": "NUMBER", "description": "Ganancia derivativa Kd para PID"},
+            "setpoint": {"type": "NUMBER", "description": "Valor deseado de referencia (default: 1.0)"},
+            "duration": {"type": "NUMBER", "description": "Duración de la simulación en segundos (default: 5.0)"},
+            "dt": {"type": "NUMBER", "description": "Intervalo de muestreo temporal dt en segundos (default: 0.02)"},
+            "x": {"type": "NUMBER", "description": "Coordenada X objetivo para cinemática inversa"},
+            "y": {"type": "NUMBER", "description": "Coordenada Y objetivo para cinemática inversa"},
+            "l1": {"type": "NUMBER", "description": "Longitud del eslabón 1 del brazo robótico"},
+            "l2": {"type": "NUMBER", "description": "Longitud del eslabón 2 del brazo robótico"},
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "materials_science",
+    "description": (
+        "Resuelve problemas y cálculos de ciencia de materiales. "
+        "Usa para: esfuerzo mecánico, deformación unitaria, Ley de Hooke, "
+        "esfuerzo térmico por cambios de temperatura y consulta de base de datos "
+        "de propiedades de materiales industriales comunes (aluminio, acero, cobre, silicio, titanio). "
+        "Ejemplos: 'calcula el esfuerzo si se aplica 5000N sobre 10mm2', "
+        "'esfuerzo térmico de barra de acero de 20 a 100 grados', "
+        "'propiedades del titanio grado 5'."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "esfuerzo_deformacion | esfuerzo_termico | seleccion_materiales"},
+            "load": {"type": "NUMBER", "description": "Fuerza de carga en Newtons (N)"},
+            "area": {"type": "NUMBER", "description": "Área de sección transversal"},
+            "area_unit": {"type": "STRING", "description": "mm2 (default) | m2"},
+            "length": {"type": "NUMBER", "description": "Longitud inicial L0"},
+            "delta_length": {"type": "NUMBER", "description": "Cambio de longitud (deformación)"},
+            "length_unit": {"type": "STRING", "description": "mm (default) | m"},
+            "young_modulus": {"type": "NUMBER", "description": "Módulo de Young (E) en GPa"},
+            "alpha": {"type": "NUMBER", "description": "Coeficiente de expansión lineal lineal x 10^-6 / °C"},
+            "delta_temp": {"type": "NUMBER", "description": "Gradiente de temperatura en °C"},
+            "material_name": {"type": "STRING", "description": "Nombre del material (ej: aluminio 6061-t6, acero aisi 1020, cobre, silicio, titanio grado 5)"}
+        },
+        "required": ["action"]
+    }
+},
+{
+    "name": "proteus_automation",
+    "description": (
+        "Automatiza la simulación de circuitos en Proteus VSM. "
+        "Abre el archivo de diseño de circuito, inicia la simulación activa durante "
+        "un tiempo determinado y cierra el programa de manera limpia."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "simulate (default)"},
+            "dsn_path": {"type": "STRING", "description": "Ruta completa del archivo .DSN del circuito. Omitir para valor predeterminado."},
+            "exe_path": {"type": "STRING", "description": "Ruta del ejecutable de Proteus BIN\\PDS.EXE. Omitir para valor predeterminado."},
+            "duration": {"type": "NUMBER", "description": "Duración de la simulación activa en segundos (default: 12.0)"}
+        },
+        "required": []
+    }
+},
+{
+    "name": "ltspice_automation",
+    "description": (
+        "Ejecuta simulaciones en lote de LTspice y extrae resultados del archivo .log. "
+        "Usa esto para validar circuitos en lote sin abrir la interfaz gráfica."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "simulate (default)"},
+            "asc_path": {"type": "STRING", "description": "Ruta del archivo .asc de LTspice. Omitir para buscar en el Escritorio."},
+            "exe_path": {"type": "STRING", "description": "Ruta del ejecutable de LTspice (por ejemplo, LTspice.exe o XVIIist.exe). Omitir para autodetectar."}
+        },
+        "required": []
+    }
+},
 ]
 
 class JarvisLive:
@@ -772,6 +932,18 @@ class JarvisLive:
 
             elif name == "datasheet_finder":
                 r = await loop.run_in_executor(None, lambda: datasheet_finder(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Done."
+
+            elif name == "materials_science":
+                r = await loop.run_in_executor(None, lambda: materials_science(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Done."
+
+            elif name == "proteus_automation":
+                r = await loop.run_in_executor(None, lambda: proteus_automation(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Done."
+
+            elif name == "ltspice_automation":
+                r = await loop.run_in_executor(None, lambda: ltspice_automation(parameters=args, player=self.ui, speak=self.speak))
                 result = r or "Done."
 
             elif name == "flight_finder":
