@@ -111,11 +111,34 @@ def _recursive_update(target: dict, updates: dict) -> bool:
 def update_memory(memory_update: dict) -> dict:
     if not isinstance(memory_update, dict) or not memory_update:
         return load_memory()
-    memory = load_memory()
-    if _recursive_update(memory, memory_update):
-        save_memory(memory)
-        print(f"[Memory] 💾 Saved: {list(memory_update.keys())}")
-    return memory
+    with _lock:
+        # Cargamos memoria (omitimos _lock interno en load_memory reusando su lógica interna o simplemente adquiriendo el lock de forma recursiva si fuera RLock,
+        # pero dado que es Lock normal, simulamos la lectura segura interna para evitar interbloqueo si load_memory intentara adquirir el mismo lock).
+        # Para evitar interbloqueos, cargamos manualmente de forma no bloqueante o llamando a una subfunción:
+        memory = _empty_memory()
+        if MEMORY_PATH.exists():
+            try:
+                data = json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    base = _empty_memory()
+                    for key in base:
+                        if key not in data:
+                            data[key] = {}
+                    memory = data
+            except Exception as e:
+                print(f"[Memory] ⚠️ Load error in update_memory: {e}")
+        
+        if _recursive_update(memory, memory_update):
+            # Guardado directo simplificado bajo el mismo lock
+            memory = _trim_to_limit(memory)
+            MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+            MEMORY_PATH.write_text(
+                json.dumps(memory, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            print(f"[Memory] 💾 Saved: {list(memory_update.keys())}")
+        return memory
+
 
 def format_memory_for_prompt(memory: dict | None) -> str:
     if not memory:

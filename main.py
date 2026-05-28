@@ -57,13 +57,10 @@ SEND_SAMPLE_RATE = 16_000
 RECEIVE_SAMPLE_RATE = 24_000
 CHUNK_SIZE = 4096  # Estabilidad de búfer reforzada
 
-def _get_api_key():
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f: return json.load(f)["gemini_api_key"]
-
-
 def _get_api_key() -> str:
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)["gemini_api_key"]
+
 
 def _load_system_prompt() -> str:
     try:
@@ -1150,13 +1147,23 @@ class JarvisLive:
                 self._retry_count = 0
 
 def main():
+    from model import JarvisModel
+    from controller import JarvisController
+
+    # 1. Crear Vista (JarvisUI)
     ui = JarvisUI("face.png")
 
+    # 2. Crear Modelo (JarvisModel)
+    model = JarvisModel()
+
+    # 3. Crear Controlador (JarvisController) vinculando Vista y Modelo
+    controller = JarvisController(model, ui)
+
+    # 4. Hilo de ejecución para el loop asíncrono gestionado por el Controlador
     def runner():
         ui.wait_for_api_key()
-        jarvis = JarvisLive(ui)
         try:
-            asyncio.run(jarvis.run())
+            asyncio.run(controller.run())
         except KeyboardInterrupt:
             print("\n🔴 Shutting down...")
 
@@ -1164,4 +1171,4 @@ def main():
     ui.root.mainloop()
 
 if __name__ == "__main__":
-    main()
+    main()

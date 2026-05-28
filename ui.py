@@ -240,8 +240,8 @@ class _SysMetrics:
                 "tmp": self.tmp,
             }
 
+# _metrics ya no se instanciará globalmente para evitar consumo inmediato. El modelo gestionará su propio SysMetricsTracker.
 
-_metrics = _SysMetrics()
 
 class HudCanvas(QWidget):
     def __init__(self, face_path: str, parent=None):
@@ -1036,11 +1036,8 @@ class MainWindow(QMainWindow):
         self._clock_tmr.start(1000)
         self._tick_clock()
 
-        # Metrik güncelleme timer'ı
-        self._metric_tmr = QTimer(self)
-        self._metric_tmr.timeout.connect(self._update_metrics)
-        self._metric_tmr.start(2000)
-        self._update_metrics()
+        # Las métricas del sistema se actualizarán mediante update_system_metrics invocado por el Controlador.
+
 
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
@@ -1072,19 +1069,17 @@ class MainWindow(QMainWindow):
                 ow, oh,
             )
 
-    def _update_metrics(self):
-        snap = _metrics.snapshot()
-
+    def update_system_metrics(self, snap: dict):
         # CPU
-        cpu = snap["cpu"]
+        cpu = snap.get("cpu", 0.0)
         self._bar_cpu.set_value(cpu, f"{cpu:.0f}%")
 
         # MEM
-        mem = snap["mem"]
+        mem = snap.get("mem", 0.0)
         self._bar_mem.set_value(mem, f"{mem:.0f}%")
 
         # NET
-        net = snap["net"]
+        net = snap.get("net", 0.0)
         if net < 1.0:
             net_str = f"{net*1024:.0f}KB/s"
         else:
@@ -1093,14 +1088,14 @@ class MainWindow(QMainWindow):
         self._bar_net.set_value(net_pct, net_str)
 
         # GPU
-        gpu = snap["gpu"]
+        gpu = snap.get("gpu", -1.0)
         if gpu >= 0:
             self._bar_gpu.set_value(gpu, f"{gpu:.0f}%")
         else:
             self._bar_gpu.set_value(0, "N/A")
 
         # TMP
-        tmp = snap["tmp"]
+        tmp = snap.get("tmp", -1.0)
         if tmp >= 0:
             tmp_pct = min(100, (tmp / 100) * 100)
             self._bar_tmp.set_value(tmp_pct, f"{tmp:.0f}°C")
@@ -1121,6 +1116,7 @@ class MainWindow(QMainWindow):
             self._proc_lbl.setText(f"PROC  {proc_count}")
         except Exception:
             self._proc_lbl.setText("PROC  --")
+
 
 
     def _build_header(self) -> QWidget:
@@ -1436,17 +1432,16 @@ class MainWindow(QMainWindow):
         self._overlay = ov
 
     def _on_setup_done(self, key: str, os_name: str):
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        API_FILE.write_text(
-            json.dumps({"gemini_api_key": key, "os_system": os_name}, indent=4),
-            encoding="utf-8",
-        )
         self._ready = True
         if self._overlay:
             self._overlay.hide()
             self._overlay = None
         self._apply_state("LISTENING")
         self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. JARVIS online.")
+        # Propagar evento de configuración al controlador si existe
+        if hasattr(self, 'on_setup_done_callback') and self.on_setup_done_callback:
+            self.on_setup_done_callback(key, os_name)
+
 
 class _RootShim:
     def __init__(self, app: QApplication):
@@ -1486,6 +1481,14 @@ class JarvisUI:
     def on_text_command(self, cb):
         self._win.on_text_command = cb
 
+    @property
+    def on_setup_done(self):
+        return getattr(self._win, 'on_setup_done_callback', None)
+
+    @on_setup_done.setter
+    def on_setup_done(self, cb):
+        self._win.on_setup_done_callback = cb
+
     def set_state(self, state: str):
         self._win._state_sig.emit(state)
 
@@ -1502,3 +1505,4 @@ class JarvisUI:
     def stop_speaking(self):
         if not self.muted:
             self.set_state("LISTENING")
+

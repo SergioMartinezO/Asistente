@@ -4,8 +4,14 @@ from datetime import datetime
 from pathlib import Path
 
 def get_history_path():
-    base = Path(__file__).resolve().parent
+    import sys
+    if getattr(sys, "frozen", False):
+        base = Path(sys.executable).parent / "memory"
+    else:
+        base = Path(__file__).resolve().parent
+    base.mkdir(parents=True, exist_ok=True)
     return base / "conversation_history.json"
+
 
 def load_history() -> list:
     path = get_history_path()
