@@ -1,195 +1,242 @@
 import math
+from dataclasses import dataclass
+from typing import Dict, Any, Optional, Callable, List
+from actions.base import BaseAction
 
+# ──────────────────────────────────────────────────────────────────────
+# Fundamento Teórico y Matemático: Normalización de Componentes (Series E)
+#
+# Las series de valores preferidos (como E24 y E96) se basan en una progresión
+# geométrica propuesta por Charles Renard y normalizada bajo la IEC 60063.
+# La fórmula para la progresión geométrica es:
+#
+#   V_n = 10^(n / N)
+#
+# Donde N representa la serie (ej. 24 o 96) y n es el índice entero en el
+# intervalo [0, N-1].
+#
+# En E24 (tolerancia ±5%), cada década se divide en 24 pasos:
+#   10^(n/24) redondeado a 2 dígitos significativos.
+# En E96 (tolerancia ±1%), cada década se divide en 96 pasos:
+#   10^(n/96) redondeado a 3 dígitos significativos.
+# ──────────────────────────────────────────────────────────────────────
+
+# Valores base normalizados de la serie E24 (2 dígitos de precisión)
+E24_BASE: List[float] = [
+    1.0, 1.1, 1.2, 1.3, 1.5, 1.6, 1.8, 2.0, 2.2, 2.4, 2.7, 3.0,
+    3.3, 3.6, 3.9, 4.3, 4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 8.2, 9.1
+]
+
+# Valores base normalizados de la serie E96 (3 dígitos de precisión)
+E96_BASE: List[float] = [
+    1.00, 1.02, 1.05, 1.07, 1.10, 1.13, 1.15, 1.18, 1.21, 1.24, 1.27, 1.30,
+    1.33, 1.37, 1.40, 1.43, 1.47, 1.50, 1.54, 1.58, 1.62, 1.65, 1.69, 1.74,
+    1.78, 1.82, 1.87, 1.91, 1.96, 2.00, 2.05, 2.10, 2.15, 2.21, 2.26, 2.32,
+    2.37, 2.43, 2.49, 2.55, 2.61, 2.67, 2.74, 2.80, 2.87, 2.94, 3.01, 3.09,
+    3.16, 3.24, 3.32, 3.40, 3.48, 3.57, 3.65, 3.74, 3.83, 3.92, 4.02, 4.12,
+    4.22, 4.32, 4.42, 4.53, 4.64, 4.75, 4.87, 4.99, 5.11, 5.23, 5.36, 5.49,
+    5.62, 5.76, 5.90, 6.04, 6.19, 6.34, 6.49, 6.65, 6.81, 6.98, 7.15, 7.32,
+    7.50, 7.68, 7.87, 8.06, 8.25, 8.45, 8.66, 8.87, 9.09, 9.31, 9.53, 9.76
+]
+
+@dataclass(frozen=True)
+class Resistencia:
+    valor_teorico: float
+    valor_comercial: float
+    serie: str
+    error_relativo: float
+
+@dataclass(frozen=True)
+class Impedancia:
+    resistencia: float
+    reactancia: float
+    modulo: float
+    angulo_rad: float
+
+class ElectronicsAction(BaseAction):
+    """Acción especializada en cálculos de ingeniería electrónica y normalización de componentes."""
+
+    @property
+    def name(self) -> str:
+        return "electronics"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Permite resolver problemas de Ley de Ohm, calcular divisores de tensión, "
+            "frecuencias de corte RC/RL, reactancias y encontrar valores comerciales "
+            "normalizados en las series E24 (5%) y E96 (1%)."
+        )
+
+    def buscar_comercial(self, valor: float, usar_e96: bool = False) -> Resistencia:
+        """Encuentra el valor comercial más cercano de la serie E24 o E96 para un valor teórico dado."""
+        if valor <= 0:
+            return Resistencia(valor, 0.0, "N/A", 0.0)
+
+        # Extraer exponente decimal
+        exponente = math.floor(math.log10(valor))
+        mantisa = valor / (10 ** exponente)
+
+        # Seleccionar base de la serie
+        serie_nombre = "E96" if usar_e96 else "E24"
+        base = E96_BASE if usar_e96 else E24_BASE
+
+        # Encontrar el valor más cercano en la lista base
+        cercano = min(base, key=lambda x: abs(x - mantisa))
+        valor_comercial = cercano * (10 ** exponente)
+
+        # Calcular error relativo
+        error = abs(valor_comercial - valor) / valor * 100
+
+        return Resistencia(
+            valor_teorico=valor,
+            valor_comercial=valor_comercial,
+            serie=serie_nombre,
+            error_relativo=error
+        )
+
+    async def execute(
+        self,
+        parameters: Dict[str, Any],
+        player: Optional[Any] = None,
+        speak_callback: Optional[Callable[[str], None]] = None
+    ) -> str:
+        action = parameters.get("action", "").lower()
+
+        def log(msg: str) -> None:
+            if player and hasattr(player, "write_log"):
+                player.write_log(f"ELEC: {msg}")
+
+        def say(msg: str) -> None:
+            log(msg)
+            if speak_callback:
+                speak_callback(msg)
+
+        # ── LEY DE OHM ──
+        if action == "ohm":
+            v = parameters.get("voltage")
+            i = parameters.get("current")
+            r = parameters.get("resistance")
+            p = parameters.get("power")
+            results = []
+
+            if v is not None and i is not None:
+                r_val = float(v) / float(i)
+                p_val = float(v) * float(i)
+                res_com = self.buscar_comercial(r_val)
+                results = [
+                    f"Resistencia teórica: {r_val:.4f} Ω",
+                    f"Comercial (E24): {res_com.valor_comercial:.1f} Ω (Error: {res_com.error_relativo:.2f}%)",
+                    f"Potencia: {p_val:.4f} W"
+                ]
+            elif v is not None and r is not None:
+                i_val = float(v) / float(r)
+                p_val = (float(v) ** 2) / float(r)
+                results = [f"Corriente: {i_val:.4f} A", f"Potencia: {p_val:.4f} W"]
+            elif i is not None and r is not None:
+                v_val = float(i) * float(r)
+                p_val = (float(i) ** 2) * float(r)
+                results = [f"Voltaje: {v_val:.4f} V", f"Potencia: {p_val:.4f} W"]
+            else:
+                msg = "Sir, necesito al menos dos valores válidos para la Ley de Ohm."
+                say(msg)
+                return msg
+
+            res_str = " | ".join(results)
+            say(res_str)
+            return res_str
+
+        # ── DIVISOR DE TENSIÓN ──
+        elif action == "divisor_tension":
+            vin = float(parameters.get("vin", 0))
+            r1 = float(parameters.get("r1", 0))
+            r2 = float(parameters.get("r2", 0))
+            if (r1 + r2) == 0:
+                return "Error: Divisor por cero en R1 + R2."
+
+            vout = vin * r2 / (r1 + r2)
+            # Encontrar contrapartes comerciales
+            r1_com = self.buscar_comercial(r1)
+            r2_com = self.buscar_comercial(r2)
+            vout_com = vin * r2_com.valor_comercial / (r1_com.valor_comercial + r2_com.valor_comercial)
+
+            result = (
+                f"Vout Teórico = {vout:.4f} V | Vout Real (E24) = {vout_com:.4f} V\n"
+                f"R1 Comercial: {r1_com.valor_comercial:.1f} Ω (Error: {r1_com.error_relativo:.2f}%)\n"
+                f"R2 Comercial: {r2_com.valor_comercial:.1f} Ω (Error: {r2_com.error_relativo:.2f}%)"
+            )
+            say(result)
+            return result
+
+        # ── FRECUENCIA DE CORTE (RC / RL) ──
+        elif action == "frecuencia_corte":
+            r = float(parameters.get("resistance", 0))
+            c = parameters.get("capacitance")
+            l = parameters.get("inductance")
+
+            if c is not None:
+                c_val = float(c)
+                fc = 1 / (2 * math.pi * r * c_val)
+                result = f"Frecuencia de corte RC: fc = {fc:.4f} Hz (R={r} Ω, C={c_val} F)"
+            elif l is not None:
+                l_val = float(l)
+                fc = r / (2 * math.pi * l_val)
+                result = f"Frecuencia de corte RL: fc = {fc:.4f} Hz (R={r} Ω, L={l_val} H)"
+            else:
+                result = "Sir, proporcione R y C, o R y L."
+
+            say(result)
+            return result
+
+        # ── CÓDIGO DE COLORES ──
+        elif action == "codigo_colores":
+            colores = {
+                "negro": 0, "marrón": 1, "rojo": 2, "naranja": 3, "amarillo": 4,
+                "verde": 5, "azul": 6, "violeta": 7, "gris": 8, "blanco": 9
+            }
+            tolerancias = {
+                "dorado": "±5%", "plateado": "±10%", "marrón": "±1%", "rojo": "±2%"
+            }
+            bandas = parameters.get("bands", [])
+            if len(bandas) < 3:
+                msg = "Sir, necesito al menos 3 bandas de colores para calcular la resistencia."
+                say(msg)
+                return msg
+
+            bandas = [b.lower() for b in bandas]
+            try:
+                if len(bandas) == 4:
+                    val = (colores[bandas[0]] * 10 + colores[bandas[1]]) * (10 ** colores[bandas[2]])
+                    tol = tolerancias.get(bandas[3], "±20%")
+                else:
+                    val = (colores[bandas[0]] * 100 + colores[bandas[1]] * 10 + colores[bandas[2]]) * (10 ** colores[bandas[3]])
+                    tol = tolerancias.get(bandas[4], "±20%")
+
+                if val >= 1_000_000:
+                    display = f"{val/1_000_000:.2f} MΩ"
+                elif val >= 1_000:
+                    display = f"{val/1_000:.2f} kΩ"
+                else:
+                    display = f"{val} Ω"
+
+                res_com = self.buscar_comercial(val)
+                result = (
+                    f"Resistencia Leída: {display} {tol}\n"
+                    f"Aproximación Comercial Cercana (E24): {res_com.valor_comercial:.1f} Ω (Error: {res_com.error_relativo:.2f}%)"
+                )
+            except KeyError as e:
+                result = f"Color no reconocido: {e}"
+
+            say(result)
+            return result
+
+        else:
+            msg = f"Acción electrónica '{action}' no soportada por el Framework actualmente."
+            say(msg)
+            return msg
+
+# Shim para compatibilidad con código existente
 def electronics(parameters: dict, player=None, speak=None):
-    action = parameters.get("action", "").lower()
-    
-    def log(msg):
-        if player:
-            player.write_log(f"ELEC: {msg}")
-    
-    def say(msg):
-        if speak:
-            speak(msg)
-        log(msg)
-
-    # ── Ley de Ohm ──────────────────────────────────────────────
-    if action == "ohm":
-        v = parameters.get("voltage")
-        i = parameters.get("current")
-        r = parameters.get("resistance")
-        p = parameters.get("power")
-        results = []
-        if v is not None and i is not None:
-            r = v / i
-            p = v * i
-            results = [f"Resistencia: {r:.4f} Ω", f"Potencia: {p:.4f} W"]
-        elif v is not None and r is not None:
-            i = v / r
-            p = v ** 2 / r
-            results = [f"Corriente: {i:.4f} A", f"Potencia: {p:.4f} W"]
-        elif i is not None and r is not None:
-            v = i * r
-            p = i ** 2 * r
-            results = [f"Voltaje: {v:.4f} V", f"Potencia: {p:.4f} W"]
-        elif p is not None and r is not None:
-            v = math.sqrt(p * r)
-            i = math.sqrt(p / r)
-            results = [f"Voltaje: {v:.4f} V", f"Corriente: {i:.4f} A"]
-        else:
-            say("Necesito al menos dos valores: voltaje, corriente, resistencia o potencia.")
-            return "Faltan parámetros para Ley de Ohm."
-        result = " | ".join(results)
-        say(result)
-        return result
-
-    # ── Resistencias en serie y paralelo ────────────────────────
-    elif action in ("serie", "paralelo"):
-        values = parameters.get("values", [])
-        if not values:
-            say("Necesito una lista de resistencias.")
-            return "Sin valores."
-        values = [float(v) for v in values]
-        if action == "serie":
-            total = sum(values)
-            result = f"Resistencia total en serie: {total:.4f} Ω"
-        else:
-            total = 1 / sum(1/v for v in values)
-            result = f"Resistencia total en paralelo: {total:.4f} Ω"
-        say(result)
-        return result
-
-    # ── Divisor de tensión ───────────────────────────────────────
-    elif action == "divisor_tension":
-        vin  = float(parameters.get("vin", 0))
-        r1   = float(parameters.get("r1", 0))
-        r2   = float(parameters.get("r2", 0))
-        vout = vin * r2 / (r1 + r2)
-        result = f"Vout = {vout:.4f} V (Vin={vin}V, R1={r1}Ω, R2={r2}Ω)"
-        say(result)
-        return result
-
-    # ── Reactancia capacitiva ────────────────────────────────────
-    elif action == "reactancia_c":
-        f = float(parameters.get("frequency", 0))
-        c = float(parameters.get("capacitance", 0))
-        if f == 0 or c == 0:
-            say("Necesito frecuencia en Hz y capacitancia en Faradios.")
-            return "Faltan parámetros."
-        xc = 1 / (2 * math.pi * f * c)
-        result = f"Reactancia capacitiva Xc = {xc:.4f} Ω (f={f}Hz, C={c}F)"
-        say(result)
-        return result
-
-    # ── Reactancia inductiva ─────────────────────────────────────
-    elif action == "reactancia_l":
-        f = float(parameters.get("frequency", 0))
-        l = float(parameters.get("inductance", 0))
-        if f == 0 or l == 0:
-            say("Necesito frecuencia en Hz e inductancia en Henrios.")
-            return "Faltan parámetros."
-        xl = 2 * math.pi * f * l
-        result = f"Reactancia inductiva XL = {xl:.4f} Ω (f={f}Hz, L={l}H)"
-        say(result)
-        return result
-
-    # ── Frecuencia de corte RC/RL ────────────────────────────────
-    elif action == "frecuencia_corte":
-        r = float(parameters.get("resistance", 0))
-        c = parameters.get("capacitance")
-        l = parameters.get("inductance")
-        if c:
-            fc = 1 / (2 * math.pi * r * float(c))
-            result = f"Frecuencia de corte RC: fc = {fc:.4f} Hz (R={r}Ω, C={c}F)"
-        elif l:
-            fc = r / (2 * math.pi * float(l))
-            result = f"Frecuencia de corte RL: fc = {fc:.4f} Hz (R={r}Ω, L={l}H)"
-        else:
-            say("Necesito R y C, o R y L.")
-            return "Faltan parámetros."
-        say(result)
-        return result
-
-    # ── Conversión dBm ↔ mW ──────────────────────────────────────
-    elif action == "dbm_mw":
-        dbm = parameters.get("dbm")
-        mw  = parameters.get("mw")
-        if dbm is not None:
-            mw_val = 10 ** (float(dbm) / 10)
-            result = f"{dbm} dBm = {mw_val:.4f} mW"
-        elif mw is not None:
-            dbm_val = 10 * math.log10(float(mw))
-            result = f"{mw} mW = {dbm_val:.4f} dBm"
-        else:
-            say("Necesito un valor en dBm o mW.")
-            return "Faltan parámetros."
-        say(result)
-        return result
-
-    # ── Conversión Vrms ↔ Vpp ────────────────────────────────────
-    elif action == "vrms_vpp":
-        vrms = parameters.get("vrms")
-        vpp  = parameters.get("vpp")
-        if vrms is not None:
-            vpp_val  = float(vrms) * 2 * math.sqrt(2)
-            vpico    = float(vrms) * math.sqrt(2)
-            result   = f"Vrms={vrms}V → Vpp={vpp_val:.4f}V | Vpico={vpico:.4f}V"
-        elif vpp is not None:
-            vrms_val = float(vpp) / (2 * math.sqrt(2))
-            result   = f"Vpp={vpp}V → Vrms={vrms_val:.4f}V"
-        else:
-            say("Necesito Vrms o Vpp.")
-            return "Faltan parámetros."
-        say(result)
-        return result
-
-    # ── Código de colores de resistencias ────────────────────────
-    elif action == "codigo_colores":
-        colores = {
-            "negro":0,"marrón":1,"rojo":2,"naranja":3,"amarillo":4,
-            "verde":5,"azul":6,"violeta":7,"gris":8,"blanco":9
-        }
-        tolerancias = {
-            "dorado":"±5%","plateado":"±10%","marrón":"±1%","rojo":"±2%"
-        }
-        bandas = parameters.get("bands", [])
-        if len(bandas) < 3:
-            say("Necesito al menos 3 bandas de colores.")
-            return "Faltan bandas."
-        bandas = [b.lower() for b in bandas]
-        try:
-            if len(bandas) == 4:
-                val = (colores[bandas[0]] * 10 + colores[bandas[1]]) * (10 ** colores[bandas[2]])
-                tol = tolerancias.get(bandas[3], "±20%")
-            else:
-                val = (colores[bandas[0]]*100 + colores[bandas[1]]*10 + colores[bandas[2]]) * (10 ** colores[bandas[3]])
-                tol = tolerancias.get(bandas[4], "±20%")
-            if val >= 1_000_000:
-                display = f"{val/1_000_000:.2f} MΩ"
-            elif val >= 1_000:
-                display = f"{val/1_000:.2f} kΩ"
-            else:
-                display = f"{val} Ω"
-            result = f"Resistencia: {display} {tol}"
-        except KeyError as e:
-            result = f"Color no reconocido: {e}"
-        say(result)
-        return result
-
-    # ── Prefijos SI ──────────────────────────────────────────────
-    elif action == "prefijo_si":
-        prefijos = {
-            "pico":1e-12,"nano":1e-9,"micro":1e-6,"mili":1e-3,
-            "kilo":1e3,"mega":1e6,"giga":1e9,"tera":1e12
-        }
-        valor  = float(parameters.get("value", 1))
-        origen = parameters.get("from_prefix", "").lower()
-        destino= parameters.get("to_prefix", "base").lower()
-        base   = valor * prefijos.get(origen, 1)
-        final  = base / prefijos.get(destino, 1) if destino != "base" else base
-        result = f"{valor} {origen} = {final:.6g} {destino}"
-        say(result)
-        return result
-
-    else:
-        say(f"Acción de electrónica no reconocida: {action}")
-        return f"Acción desconocida: {action}"
+    import asyncio
+    action_instance = ElectronicsAction()
+    return asyncio.run(action_instance.execute(parameters, player, speak))

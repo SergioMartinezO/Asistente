@@ -247,7 +247,9 @@ class JarvisController:
                 r = await loop.run_in_executor(None, lambda: game_updater(parameters=args, player=self.ui, speak=self.speak))
                 result = r or "Done."
             elif name == "electronics":
-                r = await loop.run_in_executor(None, lambda: electronics(parameters=args, player=self.ui, speak=self.speak))
+                from actions.electronics import ElectronicsAction
+                action_instance = ElectronicsAction()
+                r = await action_instance.execute(parameters=args, player=self.ui, speak_callback=self.speak)
                 result = r or "Done."
             elif name == "dev_tools":
                 r = await loop.run_in_executor(None, lambda: dev_tools(parameters=args, player=self.ui, speak=self.speak))
@@ -266,6 +268,16 @@ class JarvisController:
                 result = r or "Done."
             elif name == "ltspice_automation":
                 r = await loop.run_in_executor(None, lambda: ltspice_automation(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Done."
+            elif name == "matlab_link":
+                from actions.matlab_link import MatlabLinkAction
+                action_instance = MatlabLinkAction()
+                r = await action_instance.execute(parameters=args, player=self.ui, speak_callback=self.speak)
+                result = r or "Done."
+            elif name == "mecatronic_link":
+                from actions.mecatronic_link import MecatronicLinkAction
+                action_instance = MecatronicLinkAction()
+                r = await action_instance.execute(parameters=args, player=self.ui, speak_callback=self.speak)
                 result = r or "Done."
             elif name == "flight_finder":
                 r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
