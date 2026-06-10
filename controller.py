@@ -40,6 +40,10 @@ class JarvisController:
         self._turn_done_event = None
         self._retry_count = 0
         
+        # Servicio de Ingeniería asíncrono para cálculos complejos
+        from concurrent.futures import ThreadPoolExecutor
+        self.engineering_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="JarvisEngineering")
+        
         # Conectar callbacks de la Vista
         self.ui.on_text_command = self._on_text_command
         self.ui.on_setup_done = self._on_setup_done
@@ -249,7 +253,10 @@ class JarvisController:
             elif name == "electronics":
                 from actions.electronics import ElectronicsAction
                 action_instance = ElectronicsAction()
-                r = await action_instance.execute(parameters=args, player=self.ui, speak_callback=self.speak)
+                r = await loop.run_in_executor(
+                    self.engineering_executor,
+                    lambda: asyncio.run(action_instance.execute(parameters=args, player=self.ui, speak_callback=self.speak))
+                )
                 result = r or "Done."
             elif name == "dev_tools":
                 r = await loop.run_in_executor(None, lambda: dev_tools(parameters=args, player=self.ui, speak=self.speak))
@@ -272,12 +279,18 @@ class JarvisController:
             elif name == "matlab_link":
                 from actions.matlab_link import MatlabLinkAction
                 action_instance = MatlabLinkAction()
-                r = await action_instance.execute(parameters=args, player=self.ui, speak_callback=self.speak)
+                r = await loop.run_in_executor(
+                    self.engineering_executor,
+                    lambda: asyncio.run(action_instance.execute(parameters=args, player=self.ui, speak_callback=self.speak))
+                )
                 result = r or "Done."
             elif name == "mecatronic_link":
                 from actions.mecatronic_link import MecatronicLinkAction
                 action_instance = MecatronicLinkAction()
-                r = await action_instance.execute(parameters=args, player=self.ui, speak_callback=self.speak)
+                r = await loop.run_in_executor(
+                    self.engineering_executor,
+                    lambda: asyncio.run(action_instance.execute(parameters=args, player=self.ui, speak_callback=self.speak))
+                )
                 result = r or "Done."
             elif name == "flight_finder":
                 r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))

@@ -64,7 +64,9 @@ class ElectronicsAction(BaseAction):
                 vin = float(parameters.get("vin", 0))
                 r1 = float(parameters.get("r1", 0))
                 r2 = float(parameters.get("r2", 0))
-                res = calcular_divisor_tension(vin, r1, r2)
+                rl = parameters.get("rl")
+                rl_val = float(rl) if rl is not None else None
+                res = calcular_divisor_tension(vin, r1, r2, rl_val)
                 result = (
                     f"Vout Ideal = {res['vout_ideal']:.4f} V | Vout Real = {res['vout_comercial']:.4f} V\n"
                     f"R1 Comercial ({res['r1_com'].serie}): {res['r1_com'].valor:.1f} Ω (P: {res['p_r1']:.4f}W)\n"
