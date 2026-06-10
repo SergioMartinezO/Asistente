@@ -1,15 +1,14 @@
 import math
 import bisect
-from typing import List, Tuple
-from core.components import Resistencia
+from typing import List
+from core.electronics.components import Resistencia
 
-# Progresión E24 (5% tolerancia)
+# Valores base para aproximación comercial
 E24_BASE: List[float] = [
     1.0, 1.1, 1.2, 1.3, 1.5, 1.6, 1.8, 2.0, 2.2, 2.4, 2.7, 3.0,
     3.3, 3.6, 3.9, 4.3, 4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 8.2, 9.1
 ]
 
-# Progresión E96 (1% tolerancia)
 E96_BASE: List[float] = [
     1.00, 1.02, 1.05, 1.07, 1.10, 1.13, 1.15, 1.18, 1.21, 1.24, 1.27, 1.30,
     1.33, 1.37, 1.40, 1.43, 1.47, 1.50, 1.54, 1.58, 1.62, 1.65, 1.69, 1.74,
@@ -26,22 +25,10 @@ def buscar_resistencia_comercial(
     usar_e96: bool = False, 
     potencia_nominal: float = 0.25
 ) -> Resistencia:
-    """Aproxima un valor ideal de resistencia al componente comercial más cercano.
-    
-    Aplica búsqueda binaria O(log N) sobre la década base correspondiente.
-    
-    Args:
-        valor_ideal: Valor de resistencia calculado teóricamente (Ω).
-        usar_e96: True para tolerancia 1% (E96), False para 5% (E24).
-        potencia_nominal: Límite térmico nominal deseado en Watts (W).
-        
-    Returns:
-        Resistencia: Instancia tipada del componente comercial recomendado.
-    """
+    """Encuentra la resistencia comercial más cercana en la serie E24 o E96 (O(log N))."""
     if valor_ideal <= 0:
-        raise ValueError("El valor ideal debe ser positivo.")
+        raise ValueError("El valor ideal de resistencia debe ser estrictamente positivo.")
 
-    # Descomposición logarítmica
     exponente = math.floor(math.log10(valor_ideal))
     mantisa = valor_ideal / (10 ** exponente)
 

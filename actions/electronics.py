@@ -1,11 +1,10 @@
-import math
 from typing import Dict, Any, Optional, Callable
 from actions.base import BaseAction
-from core.components import Resistencia, Capacitor, Inductor
-from core.commercial import buscar_resistencia_comercial
+from core.electronics.components import ComponentOverloadError
+from core.electronics.calculations import calcular_ohm, calcular_divisor_tension
 
 class ElectronicsAction(BaseAction):
-    """Acción que expone el motor de cálculos de ingeniería electrónica del core al asistente."""
+    """Acción puente del framework para interactuar con el motor de electrónica core/electronics/."""
 
     @property
     def name(self) -> str:
@@ -14,22 +13,17 @@ class ElectronicsAction(BaseAction):
     @property
     def description(self) -> str:
         return (
-            "Resuelve Ley de Ohm, divisores de tensión e impedancias con análisis físico "
-            "y selección de encapsulados comerciales en las series E24/E96."
+            "Resuelve circuitos de ingeniería, ley de ohm, divisores de tensión "
+            "y evalúa la SOA térmica de componentes."
         )
 
-    def sugerir_encapsulado(self, potencia_calculada: float, factor_seguridad: float = 1.5) -> str:
-        """Determina el encapsulado comercial seguro basado en la disipación real."""
-        p_requerida = potencia_calculada * factor_seguridad
-        if p_requerida <= 0.0625: return "SMD 0201 (1/16W)"
-        if p_requerida <= 0.1:    return "SMD 0402 (1/10W)"
-        if p_requerida <= 0.125:  return "Through-Hole Axial / SMD 0805 (1/8W)"
-        if p_requerida <= 0.25:   return "Through-Hole Axial / SMD 1206 (1/4W)"
-        if p_requerida <= 0.5:    return "Through-Hole Axial / SMD 2010 (1/2W)"
-        if p_requerida <= 1.0:    return "Through-Hole Axial 1W"
-        if p_requerida <= 2.0:    return "Through-Hole Axial 2W"
-        if p_requerida <= 5.0:    return "Cerámico de Cemento 5W"
-        return "Disipador de potencia dedicado / encapsulado metálico"
+    def sugerir_encapsulado(self, potencia_calculada: float) -> str:
+        p_req = potencia_calculada * 1.5
+        if p_req <= 0.125: return "Axial / SMD 0805 (1/8W)"
+        if p_req <= 0.25:  return "Axial / SMD 1206 (1/4W)"
+        if p_req <= 0.5:   return "Axial / SMD 2010 (1/2W)"
+        if p_req <= 1.0:   return "Axial 1W"
+        return "Cerámico / Cemento de Alta Potencia"
 
     async def execute(
         self,
@@ -45,75 +39,50 @@ class ElectronicsAction(BaseAction):
             if speak_callback:
                 speak_callback(msg)
 
-        if action == "ohm":
-            v = parameters.get("voltage")
-            i = parameters.get("current")
-            r = parameters.get("resistance")
+        try:
+            if action == "ohm":
+                v = parameters.get("voltage")
+                i = parameters.get("current")
+                r = parameters.get("resistance")
+                res = calcular_ohm(
+                    v=float(v) if v is not None else None,
+                    i=float(i) if i is not None else None,
+                    r=float(r) if r is not None else None
+                )
+                if "r_ideal" in res:
+                    enc = self.sugerir_encapsulado(res["potencia"])
+                    result = (
+                        f"R Ideal = {res['r_ideal']:.2f} Ω | R Comercial = {res['r_comercial']:.1f} Ω\n"
+                        f"Potencia = {res['potencia']:.4f} W | Encapsulado seguro = {enc}"
+                    )
+                else:
+                    result = f"Resultado = {res} | Potencia = {res.get('potencia', 0.0):.4f}W"
+                say(result)
+                return result
 
-            if v is not None and i is not None:
-                r_teorica = float(v) / float(i)
-                p_disipada = float(v) * float(i)
-                res_com = buscar_resistencia_comercial(r_teorica)
-                segura = res_com.validar_seguridad(float(v))
-                enc = self.sugerir_encapsulado(p_disipada)
+            elif action == "divisor_tension":
+                vin = float(parameters.get("vin", 0))
+                r1 = float(parameters.get("r1", 0))
+                r2 = float(parameters.get("r2", 0))
+                res = calcular_divisor_tension(vin, r1, r2)
                 result = (
-                    f"Resistencia ideal: {r_teorica:.2f} Ω | Comercial E24: {res_com.valor:.1f} Ω\n"
-                    f"Potencia Disipada: {p_disipada:.4f} W | Operación Segura: {segura}\n"
-                    f"Encapsulado sugerido comercial: {enc}"
+                    f"Vout Ideal = {res['vout_ideal']:.4f} V | Vout Real = {res['vout_comercial']:.4f} V\n"
+                    f"R1 Comercial ({res['r1_com'].serie}): {res['r1_com'].valor:.1f} Ω (P: {res['p_r1']:.4f}W)\n"
+                    f"R2 Comercial ({res['r2_com'].serie}): {res['r2_com'].valor:.1f} Ω (P: {res['p_r2']:.4f}W)"
                 )
-            elif v is not None and r is not None:
-                i_val = float(v) / float(r)
-                p_disipada = (float(v) ** 2) / float(r)
-                enc = self.sugerir_encapsulado(p_disipada)
-                result = (
-                    f"Corriente calculada: {i_val:.4f} A | Potencia Disipada: {p_disipada:.4f} W\n"
-                    f"Encapsulado sugerido comercial para R: {enc}"
-                )
-            elif i is not None and r is not None:
-                v_val = float(i) * float(r)
-                p_disipada = (float(i) ** 2) * float(r)
-                enc = self.sugerir_encapsulado(p_disipada)
-                result = (
-                    f"Voltaje resultante: {v_val:.4f} V | Potencia Disipada: {p_disipada:.4f} W\n"
-                    f"Encapsulado sugerido comercial para R: {enc}"
-                )
+                say(result)
+                return result
             else:
-                result = "Sir, se requieren al menos dos variables físicas (voltage, current, resistance)."
+                return f"Acción '{action}' no soportada."
 
-            say(result)
-            return result
-
-        elif action == "divisor_tension":
-            vin = float(parameters.get("vin", 0))
-            r1 = float(parameters.get("r1", 0))
-            r2 = float(parameters.get("r2", 0))
-
-            if (r1 + r2) == 0:
-                return "Error físico: División por cero en malla cerrada."
-
-            i_lazo = vin / (r1 + r2)
-            p_r1 = (i_lazo ** 2) * r1
-            p_r2 = (i_lazo ** 2) * r2
-
-            r1_com = buscar_resistencia_comercial(r1)
-            r2_com = buscar_resistencia_comercial(r2)
-            vout_com = vin * r2_com.valor / (r1_com.valor + r2_com.valor)
-
-            enc_r1 = self.sugerir_encapsulado(p_r1)
-            enc_r2 = self.sugerir_encapsulado(p_r2)
-
-            result = (
-                f"Vout Calculado = {vin * r2 / (r1 + r2):.4f} V | Vout Comercial = {vout_com:.4f} V\n"
-                f"R1 Comercial ({r1_com.serie}): {r1_com.valor:.1f} Ω (P: {p_r1:.4f}W, {enc_r1})\n"
-                f"R2 Comercial ({r2_com.serie}): {r2_com.valor:.1f} Ω (P: {p_r2:.4f}W, {enc_r2})"
-            )
-            say(result)
-            return result
-
-        else:
-            result = f"Acción '{action}' no identificada."
-            say(result)
-            return result
+        except ComponentOverloadError as err:
+            err_msg = f"¡ALERTA DE SEGURIDAD FÍSICA! {str(err)}"
+            say(err_msg)
+            return err_msg
+        except Exception as e:
+            err_msg = f"Error en cálculo de ingeniería: {str(e)}"
+            say(err_msg)
+            return err_msg
 
 def electronics(parameters: dict, player=None, speak=None):
     import asyncio
