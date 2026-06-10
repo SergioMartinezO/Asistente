@@ -45,6 +45,9 @@ class Resistencia:
     valor_comercial: float
     serie: str
     error_relativo: float
+    potencia_disipada: float = 0.0
+    potencia_nominal_sugerida: float = 0.0
+    encapsulado_sugerido: str = "N/A"
 
 @dataclass(frozen=True)
 class Impedancia:
@@ -55,6 +58,18 @@ class Impedancia:
 
 class ElectronicsAction(BaseAction):
     """Acción especializada en cálculos de ingeniería electrónica y normalización de componentes."""
+
+    # Encapsulados comerciales de resistencias de agujero pasante (Through-Hole) y SMD comunes por potencia nominal
+    ENCAPSULADOS_COMERCIALES: List[Dict[str, Any]] = [
+        {"max_p": 0.0625, "nombre": "SMD 0201 (1/16W)"},
+        {"max_p": 0.1,    "nombre": "SMD 0402 (1/10W)"},
+        {"max_p": 0.125,  "nombre": "Through-Hole Axial / SMD 0805 (1/8W)"},
+        {"max_p": 0.25,   "nombre": "Through-Hole Axial / SMD 1206 (1/4W)"},
+        {"max_p": 0.5,    "nombre": "Through-Hole Axial / SMD 2010 (1/2W)"},
+        {"max_p": 1.0,    "nombre": "Through-Hole Axial 1W"},
+        {"max_p": 2.0,    "nombre": "Through-Hole Axial 2W"},
+        {"max_p": 5.0,    "nombre": "Cerámico de Cemento 5W"},
+    ]
 
     @property
     def name(self) -> str:
@@ -68,31 +83,74 @@ class ElectronicsAction(BaseAction):
             "normalizados en las series E24 (5%) y E96 (1%)."
         )
 
-    def buscar_comercial(self, valor: float, usar_e96: bool = False) -> Resistencia:
-        """Encuentra el valor comercial más cercano de la serie E24 o E96 para un valor teórico dado."""
+    def sugerir_encapsulado(self, potencia_calculada: float, factor_seguridad: float = 1.5) -> Dict[str, Any]:
+        """Selecciona el encapsulado comercial óptimo basándose en la potencia disipada y derating térmico.
+
+        Args:
+            potencia_calculada: Potencia eléctrica real disipada por el componente en Watts (W).
+            factor_seguridad: Factor multiplicador para garantizar confiabilidad (por defecto 1.5x).
+
+        Returns:
+            Dict: Diccionario con la potencia nominal sugerida y el nombre del encapsulado comercial.
+        """
+        p_segura = potencia_calculada * factor_seguridad
+        for enc in self.ENCAPSULADOS_COMERCIALES:
+            if enc["max_p"] >= p_segura:
+                return {"potencia_nominal": enc["max_p"], "nombre": enc["nombre"]}
+        return {"potencia_nominal": p_segura, "nombre": "Especial / Potencia Requerida por Disipador"}
+
+    def buscar_comercial(self, valor: float, usar_e96: bool = False, potencia_calc: float = 0.0) -> Resistencia:
+        """Encuentra el valor comercial más cercano de la serie E24 o E96 para un valor teórico.
+
+        Utiliza el algoritmo de búsqueda binaria (bisect_left) para localizar el elemento
+        más cercano en la progresión logarítmica con complejidad temporal O(log N).
+
+        Args:
+            valor: El valor de resistencia teórico en Ohmios (Ω).
+            usar_e96: Verdadero para usar la serie E96 (1%), Falso para E24 (5%).
+            potencia_calc: Potencia disipada real en Watts (W).
+
+        Returns:
+            Resistencia: Un objeto con el valor teórico, comercial aproximado, error y potencia.
+        """
+        import bisect
+
         if valor <= 0:
             return Resistencia(valor, 0.0, "N/A", 0.0)
 
-        # Extraer exponente decimal
         exponente = math.floor(math.log10(valor))
         mantisa = valor / (10 ** exponente)
 
-        # Seleccionar base de la serie
         serie_nombre = "E96" if usar_e96 else "E24"
         base = E96_BASE if usar_e96 else E24_BASE
 
-        # Encontrar el valor más cercano en la lista base
-        cercano = min(base, key=lambda x: abs(x - mantisa))
-        valor_comercial = cercano * (10 ** exponente)
+        # Búsqueda binaria de la posición de la mantisa en la serie normalizada
+        idx = bisect.bisect_left(base, mantisa)
 
-        # Calcular error relativo
+        # Evaluar candidatos adyacentes
+        if idx == 0:
+            cercano = base[0]
+        elif idx == len(base):
+            cercano = base[-1]
+        else:
+            izq = base[idx - 1]
+            der = base[idx]
+            cercano = izq if abs(izq - mantisa) < abs(der - mantisa) else der
+
+        valor_comercial = cercano * (10 ** exponente)
         error = abs(valor_comercial - valor) / valor * 100
+
+        # Sugerir encapsulado comercial
+        sug = self.sugerir_encapsulado(potencia_calc)
 
         return Resistencia(
             valor_teorico=valor,
             valor_comercial=valor_comercial,
             serie=serie_nombre,
-            error_relativo=error
+            error_relativo=error,
+            potencia_disipada=potencia_calc,
+            potencia_nominal_sugerida=sug["potencia_nominal"],
+            encapsulado_sugerido=sug["nombre"]
         )
 
     async def execute(
@@ -123,20 +181,31 @@ class ElectronicsAction(BaseAction):
             if v is not None and i is not None:
                 r_val = float(v) / float(i)
                 p_val = float(v) * float(i)
-                res_com = self.buscar_comercial(r_val)
+                res_com = self.buscar_comercial(r_val, potencia_calc=p_val)
                 results = [
                     f"Resistencia teórica: {r_val:.4f} Ω",
                     f"Comercial (E24): {res_com.valor_comercial:.1f} Ω (Error: {res_com.error_relativo:.2f}%)",
-                    f"Potencia: {p_val:.4f} W"
+                    f"Potencia: {p_val:.4f} W",
+                    f"Encapsulado comercial sugerido: {res_com.encapsulado_sugerido}"
                 ]
             elif v is not None and r is not None:
                 i_val = float(v) / float(r)
                 p_val = (float(v) ** 2) / float(r)
-                results = [f"Corriente: {i_val:.4f} A", f"Potencia: {p_val:.4f} W"]
+                res_com = self.buscar_comercial(float(r), potencia_calc=p_val)
+                results = [
+                    f"Corriente: {i_val:.4f} A",
+                    f"Potencia: {p_val:.4f} W",
+                    f"Encapsulado comercial sugerido: {res_com.encapsulado_sugerido}"
+                ]
             elif i is not None and r is not None:
                 v_val = float(i) * float(r)
                 p_val = (float(i) ** 2) * float(r)
-                results = [f"Voltaje: {v_val:.4f} V", f"Potencia: {p_val:.4f} W"]
+                res_com = self.buscar_comercial(float(r), potencia_calc=p_val)
+                results = [
+                    f"Voltaje: {v_val:.4f} V",
+                    f"Potencia: {p_val:.4f} W",
+                    f"Encapsulado comercial sugerido: {res_com.encapsulado_sugerido}"
+                ]
             else:
                 msg = "Sir, necesito al menos dos valores válidos para la Ley de Ohm."
                 say(msg)
@@ -155,15 +224,22 @@ class ElectronicsAction(BaseAction):
                 return "Error: Divisor por cero en R1 + R2."
 
             vout = vin * r2 / (r1 + r2)
-            # Encontrar contrapartes comerciales
-            r1_com = self.buscar_comercial(r1)
-            r2_com = self.buscar_comercial(r2)
+            
+            # Análisis térmico para divisor de tensión
+            # Corriente del lazo: I = Vin / (R1 + R2)
+            i_lazo = vin / (r1 + r2)
+            p_r1 = (i_lazo ** 2) * r1
+            p_r2 = (i_lazo ** 2) * r2
+
+            # Encontrar contrapartes comerciales con su respectivo análisis térmico
+            r1_com = self.buscar_comercial(r1, potencia_calc=p_r1)
+            r2_com = self.buscar_comercial(r2, potencia_calc=p_r2)
             vout_com = vin * r2_com.valor_comercial / (r1_com.valor_comercial + r2_com.valor_comercial)
 
             result = (
                 f"Vout Teórico = {vout:.4f} V | Vout Real (E24) = {vout_com:.4f} V\n"
-                f"R1 Comercial: {r1_com.valor_comercial:.1f} Ω (Error: {r1_com.error_relativo:.2f}%)\n"
-                f"R2 Comercial: {r2_com.valor_comercial:.1f} Ω (Error: {r2_com.error_relativo:.2f}%)"
+                f"R1 Comercial: {r1_com.valor_comercial:.1f} Ω (Error: {r1_com.error_relativo:.2f}%, P_disipada: {p_r1:.4f}W, Sugerido: {r1_com.encapsulado_sugerido})\n"
+                f"R2 Comercial: {r2_com.valor_comercial:.1f} Ω (Error: {r2_com.error_relativo:.2f}%, P_disipada: {p_r2:.4f}W, Sugerido: {r2_com.encapsulado_sugerido})"
             )
             say(result)
             return result
