@@ -5,6 +5,7 @@ import sys
 import time
 import subprocess
 import shutil
+import webbrowser
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import quote_plus
@@ -54,15 +55,25 @@ def _get_api_key() -> str:
 
 
 def _open_url(url: str) -> None:
+    """Open URL in default browser using multiple fallback methods."""
     try:
-        if is_mac():
-            subprocess.Popen(["open", url])
-        elif is_linux():
-            subprocess.Popen(["xdg-open", url])
-        else:
-            subprocess.Popen(["cmd", "/c", "start", "", url], shell=False)
-    except Exception as e:
-        print(f"[YouTube] ⚠️ open_url failed: {e}")
+        # Try webbrowser first (most reliable and cross-platform)
+        webbrowser.open(url)
+        print(f"[YouTube] ✅ Opened URL: {url}")
+    except Exception as e1:
+        print(f"[YouTube] ⚠️ webbrowser failed: {e1}, trying subprocess...")
+        try:
+            if is_mac():
+                subprocess.Popen(["open", url])
+            elif is_linux():
+                subprocess.Popen(["xdg-open", url])
+            else:
+                # Windows: use os.startfile() for better reliability
+                import os
+                os.startfile(url)
+            print(f"[YouTube] ✅ Opened URL: {url}")
+        except Exception as e2:
+            print(f"[YouTube] ❌ open_url failed: {e1} and {e2}")
 
 def _scrape_first_video_url(query: str) -> str | None:
 
@@ -117,7 +128,7 @@ def _ask_for_url(prompt_text: str = "YouTube video URL:") -> str | None:
             root = tk.Tk()
             root.withdraw()
 
-        url = simpledialog.askstring("J.A.R.V.I.S", prompt_text, parent=root)
+        url = simpledialog.askstring("R.E.X", prompt_text, parent=root)
         return url.strip() if url else None
     except Exception as e:
         print(f"[YouTube] ⚠️ URL dialog failed: {e}")
@@ -164,7 +175,7 @@ def _summarize_with_gemini(transcript: str, video_url: str) -> str:
     model = genai.GenerativeModel(
         model_name="gemini-2.5-flash",
         system_instruction=(
-            "You are JARVIS, an AI assistant. "
+            "You are Rex, an AI assistant. "
             "Summarize YouTube video transcripts clearly and concisely. "
             "Structure: 1-sentence overview, then 3-5 key points. "
             "Be direct. Address the user as 'sir'. "
@@ -188,7 +199,7 @@ def _save_summary(content: str, video_url: str) -> str:
     filepath = desktop / filename
 
     header = (
-        f"JARVIS — YouTube Summary\n"
+        f"Rex — YouTube Summary\n"
         f"{'─' * 50}\n"
         f"URL    : {video_url}\n"
         f"Date   : {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
@@ -271,7 +282,9 @@ def _scrape_trending(region: str = "TR", max_results: int = 8) -> list[dict]:
 def _handle_play(parameters: dict, player) -> str:
     query = parameters.get("query", "").strip()
     if not query:
-        return "Please tell me what you'd like to watch, sir."
+        error_msg = "youtube_video: Missing required parameter 'query' for action 'play'. Please specify what video to search for."
+        print(f"[YouTube] ❌ {error_msg}")
+        raise ValueError(error_msg)
 
     if player:
         player.write_log(f"[YouTube] Searching: {query}")
@@ -281,18 +294,22 @@ def _handle_play(parameters: dict, player) -> str:
     video_url = _scrape_first_video_url(query)
 
     if video_url:
-        print(f"[YouTube] ▶️ Opening: {video_url}")
+        print(f"[YouTube] ▶️ Found video URL: {video_url}")
+        print(f"[YouTube] 🌐 Opening in browser...")
         _open_url(video_url)
+        print(f"[YouTube] ✅ Browser opened for: {query}")
         return f"Playing: {query}"
 
-    print(f"[YouTube] ⚠️ Scrape failed, opening filtered search page")
+    print(f"[YouTube] ⚠️ Could not extract direct video URL, opening filtered search page")
     fallback_url = (
         f"https://www.youtube.com/results"
         f"?search_query={quote_plus(query)}"
         f"&sp={_YT_VIDEO_FILTER}"
     )
+    print(f"[YouTube] 🌐 Fallback URL: {fallback_url}")
     _open_url(fallback_url)
-    return f"Opened YouTube search for: {query} (manual selection required)"
+    print(f"[YouTube] ✅ Search page opened for: {query}")
+    return f"Opened YouTube search for: {query}"
 
 
 def _handle_summarize(parameters: dict, player, speak) -> str:

@@ -1,6 +1,8 @@
 import os
 import shutil
 import platform
+import stat
+import tempfile
 from pathlib import Path
 from datetime import datetime
 
@@ -16,8 +18,36 @@ _SAFE_ROOTS: list[Path] = [
     Path.home(),
 ]
 
+
+def _get_windows_shell_folder(name: str) -> Path | None:
+    try:
+        import winreg
+        for hive_path in [
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders",
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders",
+        ]:
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, hive_path) as key:
+                    value = winreg.QueryValueEx(key, name)[0]
+                    if value:
+                        return Path(os.path.expandvars(value))
+            except OSError:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def _get_user_folder(name: str, fallback: str) -> Path:
+    if _OS == "Windows":
+        path = _get_windows_shell_folder(name)
+        if path and path.exists():
+            return path
+    return Path.home() / fallback
+
+
 def _is_safe_path(target: Path) -> bool:
-    """Verilen path _SAFE_ROOTS içinde mi? Değilse işlemi reddet."""
+    """Return True if target is inside a trusted user folder."""
     try:
         resolved = target.resolve()
         return any(
@@ -25,52 +55,84 @@ def _is_safe_path(target: Path) -> bool:
             for root in _SAFE_ROOTS
         )
     except Exception:
-        return False
+        try:
+            resolved_parent = target.parent.resolve()
+            return any(
+                resolved_parent == root.resolve() or resolved_parent.is_relative_to(root.resolve())
+                for root in _SAFE_ROOTS
+            )
+        except Exception:
+            return False
+
 
 def _get_desktop() -> Path:
     if _OS == "Linux":
         xdg = os.environ.get("XDG_DESKTOP_DIR", "")
         if xdg and Path(xdg).exists():
             return Path(xdg)
-    return Path.home() / "Desktop"
+    return _get_user_folder("Desktop", "Desktop")
+
 
 def _get_downloads() -> Path:
     if _OS == "Linux":
         xdg = os.environ.get("XDG_DOWNLOAD_DIR", "")
         if xdg and Path(xdg).exists():
             return Path(xdg)
-    return Path.home() / "Downloads"
+    return _get_user_folder("{374DE290-123F-4565-9164-39C4925E467B}", "Downloads")
+
 
 def _get_documents() -> Path:
     if _OS == "Linux":
         xdg = os.environ.get("XDG_DOCUMENTS_DIR", "")
         if xdg and Path(xdg).exists():
             return Path(xdg)
-    return Path.home() / "Documents"
+    return _get_user_folder("Personal", "Documents")
+
 
 def _get_pictures() -> Path:
     if _OS == "Linux":
         xdg = os.environ.get("XDG_PICTURES_DIR", "")
         if xdg and Path(xdg).exists():
             return Path(xdg)
-    return Path.home() / "Pictures"
+    return _get_user_folder("Pictures", "Pictures")
+
 
 def _get_music() -> Path:
     if _OS == "Linux":
         xdg = os.environ.get("XDG_MUSIC_DIR", "")
         if xdg and Path(xdg).exists():
             return Path(xdg)
-    return Path.home() / "Music"
+    return _get_user_folder("Music", "Music")
+
 
 def _get_videos() -> Path:
     if _OS == "Linux":
         xdg = os.environ.get("XDG_VIDEOS_DIR", "")
         if xdg and Path(xdg).exists():
             return Path(xdg)
-    return Path.home() / "Videos"
+    return _get_user_folder("Videos", "Videos")
+
+
+# Extend safe roots with common user folders (Desktop, Documents, Downloads, etc.)
+try:
+    for p in (
+        _get_desktop(), _get_downloads(), _get_documents(),
+        _get_pictures(), _get_music(), _get_videos(),
+    ):
+        try:
+            if p and p.exists() and p.resolve() not in {r.resolve() for r in _SAFE_ROOTS}:
+                _SAFE_ROOTS.append(p)
+        except Exception:
+            continue
+except Exception:
+    pass
 
 
 def _resolve_path(raw: str) -> Path:
+    raw = os.path.expandvars(raw.strip())
+    if not raw:
+        return Path.home()
+
     shortcuts: dict[str, Path] = {
         "desktop":   _get_desktop(),
         "downloads": _get_downloads(),
@@ -79,11 +141,62 @@ def _resolve_path(raw: str) -> Path:
         "music":     _get_music(),
         "videos":    _get_videos(),
         "home":      Path.home(),
+        "escritorio": _get_desktop(),
+        "descargas":  _get_downloads(),
+        "documentos": _get_documents(),
+        "imagenes":   _get_pictures(),
+        "fotos":      _get_pictures(),
+        "musica":     _get_music(),
+        "videos":     _get_videos(),
     }
-    lower = raw.strip().lower()
+    lower = raw.lower()
     if lower in shortcuts:
         return shortcuts[lower]
-    return Path(raw).expanduser()
+
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = Path.home() / path
+    return path
+
+
+def _ensure_parent_dir(target: Path) -> Path:
+    """Create a parent directory if needed and return the target path."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _check_writable(target: Path) -> bool:
+    """Return True if the given path is writable or its parent directory is writable."""
+    try:
+        if target.exists():
+            if target.is_dir():
+                test_dir = target
+            else:
+                return os.access(str(target), os.W_OK)
+        else:
+            test_dir = target.parent
+
+        if not test_dir.exists() or not test_dir.is_dir():
+            return False
+
+        with tempfile.NamedTemporaryFile(prefix=".rex_write_test_", dir=str(test_dir), delete=False) as temp_file:
+            temp_file.write(b"rex")
+        Path(temp_file.name).unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
+
+
+def _set_writable_mode(target: Path) -> None:
+    """Clear read-only flags so the current user can write to the path."""
+    try:
+        if os.name == 'nt':
+            os.chmod(str(target), stat.S_IWRITE)
+        else:
+            os.chmod(str(target), stat.S_IRUSR | stat.S_IWUSR)
+    except Exception:
+        pass
+
 
 def _format_size(b: int) -> str:
     for unit in ["B", "KB", "MB", "GB", "TB"]:
@@ -141,9 +254,20 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
         target = (base / name) if name else base
         if not _is_safe_path(target):
             return f"Access denied: {target}"
-        target.parent.mkdir(parents=True, exist_ok=True)
+        target = _ensure_parent_dir(target)
+        if not _check_writable(target):
+            return f"Permission denied: cannot write to {target.parent}"
         target.write_text(content, encoding="utf-8")
+        try:
+            if os.name == 'nt':
+                os.chmod(str(target), stat.S_IWRITE)
+            else:
+                os.chmod(str(target), stat.S_IRUSR | stat.S_IWUSR)
+        except Exception:
+            pass
         return f"File created: {target.name}"
+    except PermissionError:
+        return f"Permission denied: {target}"
     except Exception as e:
         return f"Could not create file: {e}"
 
@@ -154,8 +278,14 @@ def create_folder(path: str, name: str = "") -> str:
         target = (base / name) if name else base
         if not _is_safe_path(target):
             return f"Access denied: {target}"
+        target = _ensure_parent_dir(target)
+        if not _check_writable(target.parent):
+            return f"Permission denied: cannot create folder in {target.parent}"
         target.mkdir(parents=True, exist_ok=True)
+        _set_writable_mode(target)
         return f"Folder created: {target.name}"
+    except PermissionError:
+        return f"Permission denied: {target}"
     except Exception as e:
         return f"Could not create folder: {e}"
 
@@ -185,7 +315,7 @@ def delete_file(path: str, name: str = "") -> str:
         return f"Could not delete: {e}"
 
 
-def move_file(path: str, name: str = "", destination: str = "") -> str:
+def move_file(path: str, name: str = "", destination: str = "", overwrite: bool = False) -> str:
     try:
         base   = _resolve_path(path)
         src    = (base / name) if name else base
@@ -203,15 +333,29 @@ def move_file(path: str, name: str = "", destination: str = "") -> str:
         if dst.is_dir():
             dst = dst / src.name
 
-        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst = _ensure_parent_dir(dst)
+        if not _check_writable(dst.parent):
+            return f"Permission denied: cannot write to {dst.parent}"
+
+        if dst.exists():
+            if not overwrite:
+                return f"Destination already exists: {dst}"
+            if dst.is_dir():
+                shutil.rmtree(dst)
+            else:
+                _set_writable_mode(dst)
+                dst.unlink()
+
         shutil.move(str(src), str(dst))
         return f"Moved: {src.name} → {dst.parent.name}/"
 
+    except PermissionError:
+        return f"Permission denied: {destination}"
     except Exception as e:
         return f"Could not move: {e}"
 
 
-def copy_file(path: str, name: str = "", destination: str = "") -> str:
+def copy_file(path: str, name: str = "", destination: str = "", overwrite: bool = False) -> str:
     try:
         base = _resolve_path(path)
         src  = (base / name) if name else base
@@ -229,15 +373,28 @@ def copy_file(path: str, name: str = "", destination: str = "") -> str:
         if dst.is_dir():
             dst = dst / src.name
 
-        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst = _ensure_parent_dir(dst)
+        if not _check_writable(dst.parent):
+            return f"Permission denied: cannot write to {dst.parent}"
 
         if src.is_dir():
+            if dst.exists():
+                if not overwrite:
+                    return f"Destination already exists: {dst}"
+                shutil.rmtree(dst)
             shutil.copytree(str(src), str(dst))
         else:
+            if dst.exists():
+                if not overwrite:
+                    return f"Destination already exists: {dst}"
+                _set_writable_mode(dst)
+                dst.unlink()
             shutil.copy2(str(src), str(dst))
 
         return f"Copied: {src.name} → {dst.parent.name}/"
 
+    except PermissionError:
+        return f"Permission denied: {destination}"
     except Exception as e:
         return f"Could not copy: {e}"
 
@@ -291,12 +448,23 @@ def write_file(path: str, name: str = "", content: str = "",
         target = (base / name) if name else base
         if not _is_safe_path(target):
             return f"Access denied: {target}"
-        target.parent.mkdir(parents=True, exist_ok=True)
+        target = _ensure_parent_dir(target)
+        if not _check_writable(target):
+            return f"Permission denied: cannot write to {target.parent}"
         mode = "a" if append else "w"
         with open(target, mode, encoding="utf-8") as f:
             f.write(content)
+        try:
+            if os.name == 'nt':
+                os.chmod(str(target), stat.S_IWRITE)
+            else:
+                os.chmod(str(target), stat.S_IRUSR | stat.S_IWUSR)
+        except Exception:
+            pass
         action = "Appended to" if append else "Written to"
         return f"{action}: {target.name}"
+    except PermissionError:
+        return f"Permission denied: {target}"
     except Exception as e:
         return f"Could not write file: {e}"
 
@@ -495,10 +663,18 @@ def file_controller(
             return delete_file(path, name=name)
 
         elif action == "move":
-            return move_file(path, name=name, destination=params.get("destination", ""))
+            return move_file(
+                path, name=name,
+                destination=params.get("destination", ""),
+                overwrite=bool(params.get("overwrite", False))
+            )
 
         elif action == "copy":
-            return copy_file(path, name=name, destination=params.get("destination", ""))
+            return copy_file(
+                path, name=name,
+                destination=params.get("destination", ""),
+                overwrite=bool(params.get("overwrite", False))
+            )
 
         elif action == "rename":
             return rename_file(path, name=name, new_name=params.get("new_name", ""))

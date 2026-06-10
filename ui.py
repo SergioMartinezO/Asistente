@@ -25,7 +25,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QTextEdit,
-    QVBoxLayout, QWidget, QProgressBar,
+    QVBoxLayout, QWidget, QProgressBar, QMessageBox,
 )
 
 def _base_dir() -> Path:
@@ -454,7 +454,7 @@ class HudCanvas(QWidget):
             p.setPen(QPen(qcol(C.PRI, min(255, int(self._halo * 2))), 1))
             p.setFont(QFont("Courier New", 13, QFont.Weight.Bold))
             p.drawText(QRectF(cx - 80, cy - 14, 160, 28),
-                       Qt.AlignmentFlag.AlignCenter, "J.A.R.V.I.S")
+                       Qt.AlignmentFlag.AlignCenter, "R.E.X")
 
         # particles
         for pt in self._particles:
@@ -608,7 +608,7 @@ class LogWidget(QTextEdit):
         self._pos    = 0
         tl = self._text.lower()
         if   tl.startswith("you:"):    self._tag = "you"
-        elif tl.startswith("jarvis:"): self._tag = "ai"
+        elif tl.startswith("jarvis:") or tl.startswith("rex:"): self._tag = "ai"
         elif tl.startswith("file:"):   self._tag = "file"
         elif "err" in tl:              self._tag = "err"
         else:                          self._tag = "sys"
@@ -734,7 +734,7 @@ class FileDropZone(QWidget):
 
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select a file for JARVIS", str(Path.home()),
+            self, "Select a file for R.E.X", str(Path.home()),
             "All Files (*.*);;"
             "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg);;"
             "Documents (*.pdf *.docx *.txt *.md *.pptx);;"
@@ -889,7 +889,7 @@ class SetupOverlay(QWidget):
             return w
 
         layout.addWidget(_lbl("◈  INITIALISATION REQUIRED", 13, True))
-        layout.addWidget(_lbl("Configure J.A.R.V.I.S. before first boot.", 9, color=C.PRI_DIM))
+        layout.addWidget(_lbl("Configure R.E.X before first boot.", 9, color=C.PRI_DIM))
         layout.addSpacing(6)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
@@ -1002,6 +1002,7 @@ class MainWindow(QMainWindow):
         )
 
         self.on_text_command  = None
+        self.on_permission_check = None
         self._muted           = False
         self._current_file: str | None = None
 
@@ -1136,12 +1137,12 @@ class MainWindow(QMainWindow):
         lay.addStretch()
 
         mid = QVBoxLayout(); mid.setSpacing(1)
-        title = QLabel("J.A.R.V.I.S")
+        title = QLabel("R.E.X")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setFont(QFont("Courier New", 17, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         mid.addWidget(title)
-        sub = QLabel("Just A Rather Very Intelligent System")
+        sub = QLabel("Responsive Expert eXecutor")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sub.setFont(QFont("Courier New", 7))
         sub.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent;")
@@ -1300,6 +1301,17 @@ class MainWindow(QMainWindow):
         fs_btn.clicked.connect(self._toggle_fullscreen)
         lay.addWidget(fs_btn)
 
+        perm_btn = QPushButton("🔐  COMPROBAR PERMISOS")
+        perm_btn.setFixedHeight(26)
+        perm_btn.setFont(QFont("Courier New", 8))
+        perm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        perm_btn.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {C.TEXT_MED}; border: 1px solid {C.BORDER}; border-radius: 3px; }}
+            QPushButton:hover {{ color: {C.PRI}; border: 1px solid {C.BORDER_B}; }}
+        """)
+        perm_btn.clicked.connect(self._on_perm_click)
+        lay.addWidget(perm_btn)
+
         return w
 
     def _build_input_row(self) -> QHBoxLayout:
@@ -1357,7 +1369,7 @@ class MainWindow(QMainWindow):
         cat  = _file_category(p)
         icon, _ = _FILE_ICONS.get(cat, _FILE_ICONS["unknown"])
         size = _fmt_size(p.stat().st_size)
-        self._file_hint.setText(f"{icon}  {p.name}  ·  {size}  ·  Tell JARVIS what to do with it")
+        self._file_hint.setText(f"{icon}  {p.name}  ·  {size}  ·  Tell R.E.X what to do with it")
         self._log.append_log(f"FILE: {p.name} ({size}) loaded")
         if self.on_text_command:
             msg = (
@@ -1367,6 +1379,22 @@ class MainWindow(QMainWindow):
                 f"({size}) has been uploaded and ask what they'd like to do with it."
             )
             threading.Thread(target=self.on_text_command, args=(msg,), daemon=True).start()
+
+    def _on_perm_click(self):
+        self._log.append_log("SYS: Permission check requested by user.")
+        # Ask whether to run on all folders or common folders
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Comprobar permisos")
+        dlg.setText("¿Deseas comprobar permisos en TODAS las carpetas del perfil?\n\n(Yes = todas, No = solo carpetas comunes)")
+        dlg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
+        dlg.setDefaultButton(QMessageBox.StandardButton.No)
+        resp = dlg.exec()
+        if resp == QMessageBox.StandardButton.Cancel:
+            self._log.append_log("SYS: Permission check canceled by user.")
+            return
+        all_flag = (resp == QMessageBox.StandardButton.Yes)
+        if self.on_permission_check:
+            threading.Thread(target=self.on_permission_check, args=(all_flag,), daemon=True).start()
 
     def _toggle_mute(self):
         self._muted = not self._muted
@@ -1437,7 +1465,7 @@ class MainWindow(QMainWindow):
             self._overlay.hide()
             self._overlay = None
         self._apply_state("LISTENING")
-        self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. JARVIS online.")
+        self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. Rex online.")
         # Propagar evento de configuración al controlador si existe
         if hasattr(self, 'on_setup_done_callback') and self.on_setup_done_callback:
             self.on_setup_done_callback(key, os_name)
@@ -1488,6 +1516,14 @@ class JarvisUI:
     @on_setup_done.setter
     def on_setup_done(self, cb):
         self._win.on_setup_done_callback = cb
+
+    @property
+    def on_permission_check(self):
+        return getattr(self._win, 'on_permission_check', None)
+
+    @on_permission_check.setter
+    def on_permission_check(self, cb):
+        self._win.on_permission_check = cb
 
     def set_state(self, state: str):
         self._win._state_sig.emit(state)

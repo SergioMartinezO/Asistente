@@ -46,6 +46,7 @@ class JarvisController:
         
         # Conectar callbacks de la Vista
         self.ui.on_text_command = self._on_text_command
+        self.ui.on_permission_check = self._on_permission_check
         self.ui.on_setup_done = self._on_setup_done
         
         # Iniciar monitor de hardware
@@ -73,6 +74,19 @@ class JarvisController:
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
             return
+        # Intercept voice/text triggers for local actions
+        try:
+            low = text.strip().lower()
+            if 'comprobar permisos' in low or 'comprobar permiso' in low:
+                all_flag = False
+                if 'todas' in low or 'todas las' in low or 'todo' in low:
+                    all_flag = True
+                # run local permission check
+                self._on_permission_check(all_flag)
+                return
+        except Exception:
+            pass
+
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
                 turns={"parts": [{"text": text}]},
@@ -96,6 +110,24 @@ class JarvisController:
         short = str(error)[:120]
         self.ui.write_log(f"ERR: {tool_name} — {short}")
         self.speak(f"Sir, {tool_name} encountered an error. {short}")
+
+    def _on_permission_check(self, all_flag: bool = False):
+        def _run():
+            try:
+                from actions.permission_check import permission_check
+                if all_flag:
+                    self.ui.write_log("SYS: Running permission check (ALL folders)...")
+                else:
+                    self.ui.write_log("SYS: Running permission check (common folders)...")
+                res = permission_check(parameters={"all": all_flag})
+                # write report to log (may be long)
+                for line in res.splitlines():
+                    self.ui.write_log(line)
+                if not self.ui.muted:
+                    self.speak("Comprobación de permisos finalizada. Revisa el registro.")
+            except Exception as e:
+                self.speak_error('permission_check', e)
+        threading.Thread(target=_run, daemon=True).start()
 
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
@@ -139,7 +171,7 @@ class JarvisController:
         name = fc.name
         args = dict(fc.args or {})
 
-        print(f"[JARVIS] 🔧 {name}  {args}")
+        print(f"[REX] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
 
         if name == "save_memory":
@@ -316,7 +348,7 @@ class JarvisController:
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
 
-        print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
+        print(f"[REX] 📤 {name} → {str(result)[:80]}")
         return types.FunctionResponse(
             id=fc.id, name=name,
             response={"result": result}
@@ -328,7 +360,7 @@ class JarvisController:
             await self.session.send_realtime_input(media=msg)
 
     async def _listen_audio(self):
-        print("[JARVIS] 🎤 Mic started")
+        print("[REX] 🎤 Mic started")
         loop = asyncio.get_event_loop()
 
         def _enqueue_audio(payload):
@@ -339,10 +371,10 @@ class JarvisController:
 
         def callback(indata, frames, time_info, status):
             if status:
-                print(f"[JARVIS] Mic status: {status}")
+                print(f"[REX] Mic status: {status}")
             with self._speaking_lock:
-                jarvis_speaking = self._is_speaking
-            if not jarvis_speaking and not self.ui.muted:
+                rex_speaking = self._is_speaking
+            if not rex_speaking and not self.ui.muted:
                 loop.call_soon_threadsafe(
                     _enqueue_audio,
                     {"data": indata.tobytes(), "mime_type": "audio/pcm"},
@@ -356,16 +388,16 @@ class JarvisController:
                 blocksize=CHUNK_SIZE,
                 callback=callback,
             ):
-                print("[JARVIS] 🎤 Mic stream open")
+                print("[REX] 🎤 Mic stream open")
                 while True:
                     await asyncio.sleep(0.1)
         except Exception as e:
-            print(f"[JARVIS] ❌ Mic: {e}")
+            print(f"[REX] ❌ Mic: {e}")
             self.ui.write_log(f"SYS: Microphone error — {e}")
             raise
 
     async def _receive_audio(self):
-        print("[JARVIS] 👂 Recv started")
+        print("[REX] 👂 Recv started")
         out_buf, in_buf = [], []
 
         try:
@@ -401,26 +433,26 @@ class JarvisController:
 
                             full_out = " ".join(out_buf).strip()
                             if full_out:
-                                self.ui.write_log(f"Jarvis: {full_out}")
-                                self.model.session_log.append({"role": "jarvis", "text": full_out})
+                                self.ui.write_log(f"Rex: {full_out}")
+                                self.model.session_log.append({"role": "rex", "text": full_out})
                             out_buf = []
 
                     if response.tool_call:
                         fn_responses = []
                         for fc in response.tool_call.function_calls:
-                            print(f"[JARVIS] 📞 {fc.name}")
+                            print(f"[REX] 📞 {fc.name}")
                             fr = await self._execute_tool(fc)
                             fn_responses.append(fr)
                         await self.session.send_tool_response(
                             function_responses=fn_responses
                         )
         except Exception as e:
-            print(f"[JARVIS] ❌ Recv: {e}")
+            print(f"[REX] ❌ Recv: {e}")
             traceback.print_exc()
             raise
 
     async def _play_audio(self):
-        print("[JARVIS] 🔊 Play started")
+        print("[REX] 🔊 Play started")
 
         stream = sd.RawOutputStream(
             samplerate=RECEIVE_SAMPLE_RATE,
@@ -449,7 +481,7 @@ class JarvisController:
                 self.set_speaking(True)
                 await asyncio.to_thread(stream.write, chunk)
         except Exception as e:
-            print(f"[JARVIS] ❌ Play: {e}")
+            print(f"[REX] ❌ Play: {e}")
             raise
         finally:
             self.set_speaking(False)
@@ -468,7 +500,7 @@ class JarvisController:
 
         while True:
             try:
-                print("[JARVIS] 🔌 Conectando...")
+                print("[REX] 🔌 Conectando...")
                 self.ui.set_state("THINKING")
                 config = self._build_config()
 
@@ -482,9 +514,9 @@ class JarvisController:
                     self.out_queue = asyncio.Queue(maxsize=10)
                     self._turn_done_event = asyncio.Event()
 
-                    print("[JARVIS] ✅ Conectado....")
+                    print("[REX] ✅ Conectado....")
                     self.ui.set_state("LISTENING")
-                    self.ui.write_log("SYS: JARVIS esta en linea.")
+                    self.ui.write_log("SYS: REX esta en linea.")
 
                     tg.create_task(self._send_realtime())
                     tg.create_task(self._listen_audio())
@@ -492,7 +524,7 @@ class JarvisController:
                     tg.create_task(self._play_audio())
 
             except Exception as e:
-                print(f"[JARVIS] ⚠️ {e}")
+                print(f"[REX] ⚠️ {e}")
                 traceback.print_exc()
                 self.set_speaking(False)
                 self.ui.set_state("THINKING")
@@ -500,7 +532,7 @@ class JarvisController:
                 retry = getattr(self, '_retry_count', 0)
                 wait = min(3 * (2 ** retry), 60)
                 self._retry_count = retry + 1
-                print(f"[JARVIS] 🔄 Reconectando en {wait}s... (intento {self._retry_count})")
+                print(f"[REX] 🔄 Reconectando en {wait}s... (intento {self._retry_count})")
                 self.ui.write_log(f"SYS: Reconectando en {wait}s...")
                 await asyncio.sleep(wait)
             else:

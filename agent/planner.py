@@ -22,6 +22,7 @@ ABSOLUTE RULES:
 - NEVER reference previous step results in parameters. Every step is independent.
 - Use web_search for ANY information retrieval, research, or current data.
 - Use file_controller to save content to disk.
+- For youtube_video with action="play": ALWAYS extract the video topic/search term from the goal and put it in the "query" parameter. The query should be specific (e.g., "Python tutorial for beginners", not just "tutorial").
 - Max 5 steps. Use the minimum steps needed.
 
 AVAILABLE TOOLS AND THEIR PARAMETERS:
@@ -51,9 +52,10 @@ browser_control
 
 file_controller
   action: "write" | "create_file" | "read" | "list" | "delete" | "move" | "copy" | "find" | "disk_usage" (required)
-  path: string — use "desktop" for Desktop folder
+  path: string — use "desktop", "documents", "downloads", "home" or custom folder under home
   name: string — filename
   content: string — file content (for write/create_file)
+  append: boolean — true to append content when writing.
 
 computer_settings
   action: string (required)
@@ -89,8 +91,11 @@ desktop_control
   task: string (optional)
 
 youtube_video
-  action: "play" | "summarize" | "trending" (required)
-  query: string (for play)
+  action: "play" | "summarize" | "get_info" | "trending" (required)
+  query: string (required if action is "play" — the video topic/search term to find and play)
+  url: string (required if action is "get_info")
+  region: string (optional for trending — country code like US, TR, UK, default: TR)
+  save: boolean (optional for summarize — save summary to file, default: false)
 
 weather_report
   city: string (required)
@@ -118,6 +123,16 @@ Steps:
 web_search | query: "mechanical engineering overview definition history"
 web_search | query: "mechanical engineering applications and future trends"
 file_controller | action: write, path: desktop, name: mechanical_engineering.txt, content: "MECHANICAL ENGINEERING RESEARCH\n\nThis file will be filled with web research results."
+
+Goal: "Show me trending YouTube videos in Turkey"
+Steps:
+
+youtube_video | action: trending, region: TR
+
+Goal: "Play a video about machine learning on YouTube"
+Steps:
+
+youtube_video | action: play, query: "machine learning tutorial"
 
 Goal: "What is the price of Bitcoin"
 Steps:

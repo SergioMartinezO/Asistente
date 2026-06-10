@@ -216,6 +216,10 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
         from actions.youtube_video import youtube_video
         return youtube_video(parameters=parameters, player=None) or "Done."
 
+    elif tool == "permission_check":
+        from actions.permission_check import permission_check
+        return permission_check(parameters=parameters) or "Done."
+
     elif tool == "weather_report":
         from actions.weather_report import weather_action
         return weather_action(parameters=parameters, player=None) or "Done."

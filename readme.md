@@ -79,3 +79,7 @@ Engineered by a developer building a real-world JARVIS-style assistant.
 |---|---|
 | YouTube | [@FatihMakes](https://www.youtube.com/@FatihMakes) |
 | Instagram | [@fatihmakes](https://www.instagram.com/fatihmakes) |
+
+## Permisos en Windows
+
+Si necesitas otorgar permisos de escritura al asistente en `Desktop` o `Documents`, revisa `docs/windows_permissions.md` y ejecuta `scripts/grant_permissions.ps1` con PowerShell.
