@@ -314,7 +314,7 @@ class JarvisController:
             self.speak_error(name, e)
 
         if not self.ui.muted:
-            self.ui.set_state("ESCUCHANDO Y ANALIZANDO")
+            self.ui.set_state("LISTENING")
 
         print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
         return types.FunctionResponse(
@@ -331,14 +331,21 @@ class JarvisController:
         print("[JARVIS] 🎤 Mic started")
         loop = asyncio.get_event_loop()
 
+        def _enqueue_audio(payload):
+            try:
+                self.out_queue.put_nowait(payload)
+            except asyncio.QueueFull:
+                pass
+
         def callback(indata, frames, time_info, status):
+            if status:
+                print(f"[JARVIS] Mic status: {status}")
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
             if not jarvis_speaking and not self.ui.muted:
-                data = indata.tobytes()
                 loop.call_soon_threadsafe(
-                    self.out_queue.put_nowait,
-                    {"data": data, "mime_type": "audio/pcm"}
+                    _enqueue_audio,
+                    {"data": indata.tobytes(), "mime_type": "audio/pcm"},
                 )
 
         try:
@@ -354,6 +361,7 @@ class JarvisController:
                     await asyncio.sleep(0.1)
         except Exception as e:
             print(f"[JARVIS] ❌ Mic: {e}")
+            self.ui.write_log(f"SYS: Microphone error — {e}")
             raise
 
     async def _receive_audio(self):
@@ -461,7 +469,7 @@ class JarvisController:
         while True:
             try:
                 print("[JARVIS] 🔌 Conectando...")
-                self.ui.set_state("Pensando....")
+                self.ui.set_state("THINKING")
                 config = self._build_config()
 
                 async with (
@@ -475,7 +483,7 @@ class JarvisController:
                     self._turn_done_event = asyncio.Event()
 
                     print("[JARVIS] ✅ Conectado....")
-                    self.ui.set_state("Escuchando y Analizando")
+                    self.ui.set_state("LISTENING")
                     self.ui.write_log("SYS: JARVIS esta en linea.")
 
                     tg.create_task(self._send_realtime())
@@ -487,7 +495,8 @@ class JarvisController:
                 print(f"[JARVIS] ⚠️ {e}")
                 traceback.print_exc()
                 self.set_speaking(False)
-                self.ui.set_state("Pensando")
+                self.ui.set_state("THINKING")
+                self.ui.write_log(f"SYS: Connection error — {str(e)[:120]}")
                 retry = getattr(self, '_retry_count', 0)
                 wait = min(3 * (2 ** retry), 60)
                 self._retry_count = retry + 1

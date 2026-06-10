@@ -16,7 +16,6 @@ Pillow
 psutil
 comtypes
 pycaw               
-win10toast          
 send2trash
 youtube-transcript-api
 pywinauto
