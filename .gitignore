@@ -1,0 +1,25 @@
+# API Keys and Secrets
+config/api_keys.json
+.env
+.env.local
+*.key
+*.pem
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
