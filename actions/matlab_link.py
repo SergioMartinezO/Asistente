@@ -39,6 +39,7 @@ class MatlabLinkAction(BaseAction):
     ) -> str:
         num = parameters.get("num", [1.0])
         den = parameters.get("den", [1.0, 1.0])
+        plot_type = parameters.get("plot_type", "bode").lower()  # "bode" | "nyquist"
 
         def say(msg: str) -> None:
             if player and hasattr(player, "write_log"):
@@ -58,15 +59,20 @@ class MatlabLinkAction(BaseAction):
             m_den = matlab_engine.double(den)
 
             say("Generando la función de transferencia en el espacio de Laplace...")
-            eng.eval("pkg load control", nargout=0)  # Cargar toolbox de control si se usa alternativa libre o config compatible
+            eng.eval("pkg load control", nargout=0)  # Cargar toolbox de control
             eng.workspace['num'] = m_num
             eng.workspace['den'] = m_den
             eng.eval("sys = tf(num, den);", nargout=0)
             
-            say("Graficando el Diagrama de Bode...")
-            eng.eval("figure; bode(sys); grid on;", nargout=0)
+            if plot_type == "nyquist":
+                say("Graficando el Diagrama de Nyquist...")
+                eng.eval("figure; nyquist(sys); grid on;", nargout=0)
+                result = f"Diagrama de Nyquist generado exitosamente para H(s) = {num} / {den}."
+            else:
+                say("Graficando el Diagrama de Bode...")
+                eng.eval("figure; bode(sys); grid on;", nargout=0)
+                result = f"Diagrama de Bode generado exitosamente para H(s) = {num} / {den}."
             
-            result = f"Diagrama de Bode generado exitosamente para H(s) = {num} / {den}."
             say(result)
             return result
 
@@ -79,25 +85,46 @@ class MatlabLinkAction(BaseAction):
                 import matplotlib.pyplot as plt
 
                 sys = signal.TransferFunction(num, den)
-                w, mag, phase = signal.bode(sys)
 
-                plt.figure(figsize=(10, 6))
-                plt.subplot(2, 1, 1)
-                plt.semilogx(w, mag)
-                plt.title("Diagrama de Bode (Motor de Respaldo SciPy)")
-                plt.ylabel("Magnitud (dB)")
-                plt.grid(True, which="both")
+                if plot_type == "nyquist":
+                    # Diagrama de Nyquist: Respuesta compleja H(jω) graficando Parte Real vs Imaginaria
+                    # Frecuencias logarítmicas de muestra
+                    w = np.logspace(-2, 3, 1000)
+                    w, h_freq = signal.freqresp(sys, w=w)
+                    
+                    plt.figure(figsize=(8, 8))
+                    plt.plot(h_freq.real, h_freq.imag, 'b-', label='H(jω)')
+                    plt.plot(h_freq.real, -h_freq.imag, 'r--', label='H(-jω) conjugado')
+                    plt.plot(-1, 0, 'rx', markersize=10, label='Punto Crítico (-1,0)')
+                    plt.title("Diagrama de Nyquist (Motor de Respaldo SciPy)")
+                    plt.xlabel("Parte Real (Re)")
+                    plt.ylabel("Parte Imaginaria (Im)")
+                    plt.grid(True, which="both")
+                    plt.axhline(y=0, color='k', lw=1)
+                    plt.axvline(x=0, color='k', lw=1)
+                    plt.legend()
+                    plt.axis('equal')
+                    plt.show(block=False)
+                    result = "Simulación de Nyquist alternativa completada y graficada."
+                else:
+                    w, mag, phase = signal.bode(sys)
+                    plt.figure(figsize=(10, 6))
+                    plt.subplot(2, 1, 1)
+                    plt.semilogx(w, mag)
+                    plt.title("Diagrama de Bode (Motor de Respaldo SciPy)")
+                    plt.ylabel("Magnitud (dB)")
+                    plt.grid(True, which="both")
 
-                plt.subplot(2, 1, 2)
-                plt.semilogx(w, phase)
-                plt.ylabel("Fase (grados)")
-                plt.xlabel("Frecuencia (rad/s)")
-                plt.grid(True, which="both")
-                
-                plt.tight_layout()
-                plt.show(block=False)
+                    plt.subplot(2, 1, 2)
+                    plt.semilogx(w, phase)
+                    plt.ylabel("Fase (grados)")
+                    plt.xlabel("Frecuencia (rad/s)")
+                    plt.grid(True, which="both")
+                    
+                    plt.tight_layout()
+                    plt.show(block=False)
+                    result = "Simulación de Bode alternativa completada y graficada."
 
-                result = "Simulación alternativa completada. Gráfico mostrado mediante Matplotlib."
                 say(result)
                 return result
 
