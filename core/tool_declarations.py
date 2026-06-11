@@ -159,13 +159,15 @@ TOOL_DECLARATIONS = [
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action":      {"type": "STRING", "description": "list | create_file | create_folder | delete | move | copy | rename | read | write | find | largest | disk_usage | organize_desktop | info"},
+                "action":      {"type": "STRING", "description": "list | open | create_file | create_folder | delete | move | copy | rename | read | write | find | largest | disk_usage | organize_desktop | info"},
                 "path":        {"type": "STRING", "description": "File/folder path or shortcut: desktop, downloads, documents, home"},
                 "destination": {"type": "STRING", "description": "Destination path for move/copy"},
                 "overwrite":   {"type": "BOOLEAN", "description": "Overwrite destination if it already exists for move/copy"},
+                "recursive":   {"type": "BOOLEAN", "description": "Recursively list nested folders and files for list action"},
+                "show_hidden": {"type": "BOOLEAN", "description": "Include hidden files/folders in list action"},
                 "new_name":    {"type": "STRING", "description": "New name for rename"},
                 "content":     {"type": "STRING", "description": "Content for create_file/write"},
-                "name":        {"type": "STRING", "description": "File name to search for"},
+                "name":        {"type": "STRING", "description": "File name to search for, or name of file/folder to open"},
                 "extension":   {"type": "STRING", "description": "File extension to search (e.g. .pdf)"},
                 "count":       {"type": "INTEGER", "description": "Number of results for largest"},
             },

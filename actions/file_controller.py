@@ -1,5 +1,6 @@
 import os
 import shutil
+import subprocess
 import platform
 import stat
 import tempfile
@@ -129,7 +130,8 @@ except Exception:
 
 
 def _resolve_path(raw: str) -> Path:
-    raw = os.path.expandvars(raw.strip())
+    raw = os.path.expandvars(str(raw).strip())
+    raw = raw.strip('"').strip("'")
     if not raw:
         return Path.home()
 
@@ -153,10 +155,17 @@ def _resolve_path(raw: str) -> Path:
     if lower in shortcuts:
         return shortcuts[lower]
 
+    if _OS == "Windows":
+        raw = raw.replace('/', '\\')
+        if raw.startswith('\\\\'):
+            raw = '\\\\' + raw[4:].replace('\\\\', '\\')
+        else:
+            raw = raw.replace('\\\\', '\\')
+
     path = Path(raw).expanduser()
     if not path.is_absolute():
         path = Path.home() / path
-    return path
+    return Path(os.path.normpath(str(path)))
 
 
 def _ensure_parent_dir(target: Path) -> Path:
@@ -205,6 +214,35 @@ def _format_size(b: int) -> str:
         b /= 1024
     return f"{b:.1f} TB"
 
+
+def _open_target(target: Path) -> str:
+    if not _is_safe_path(target):
+        return f"Access denied: {target}"
+    if not target.exists():
+        return f"Not found: {target}"
+    try:
+        resolved = Path(os.path.normpath(str(target)))
+        if _OS == "Windows":
+            try:
+                os.startfile(str(resolved))
+            except Exception:
+                subprocess.Popen(["explorer", str(resolved)])
+        elif _OS == "Darwin":
+            subprocess.Popen(["open", str(resolved)])
+        else:
+            subprocess.Popen(["xdg-open", str(resolved)])
+        return f"Opened: {resolved}"
+    except Exception as e:
+        try:
+            if _OS == "Windows":
+                safe_path = str(target).replace('/', '\\').strip('"').strip("'")
+                subprocess.Popen(f'start "" "{safe_path}"', shell=True)
+                return f"Opened: {safe_path}"
+        except Exception:
+            pass
+        return f"Could not open: {e}"
+
+
 def _safe_trash(target: Path) -> str:
 
     if not _SEND2TRASH:
@@ -217,7 +255,7 @@ def _safe_trash(target: Path) -> str:
     return f"Moved to Trash: {target.name}"
 
 
-def list_files(path: str = "desktop", show_hidden: bool = False) -> str:
+def list_files(path: str = "desktop", show_hidden: bool = False, recursive: bool = False) -> str:
     try:
         target = _resolve_path(path)
         if not _is_safe_path(target):
@@ -228,19 +266,33 @@ def list_files(path: str = "desktop", show_hidden: bool = False) -> str:
             return f"Not a directory: {target}"
 
         items = []
-        for item in sorted(target.iterdir()):
-            if not show_hidden and item.name.startswith("."):
-                continue
-            if item.is_dir():
-                items.append(f"📁 {item.name}/")
-            else:
-                size = _format_size(item.stat().st_size)
-                items.append(f"📄 {item.name} ({size})")
+        if recursive:
+            for item in sorted(target.rglob("*")):
+                if not show_hidden and any(part.startswith(".") for part in item.relative_to(target).parts):
+                    continue
+                indent = "  " * (len(item.relative_to(target).parts) - 1)
+                if item.is_dir():
+                    items.append(f"{indent}📁 {item.name}/")
+                else:
+                    size = _format_size(item.stat().st_size)
+                    items.append(f"{indent}📄 {item.name} ({size})")
+        else:
+            for item in sorted(target.iterdir()):
+                if not show_hidden and item.name.startswith("."):
+                    continue
+                if item.is_dir():
+                    items.append(f"📁 {item.name}/")
+                else:
+                    size = _format_size(item.stat().st_size)
+                    items.append(f"📄 {item.name} ({size})")
 
         if not items:
             return f"Directory is empty: {target.name}/"
 
-        return f"Contents of {target.name}/ ({len(items)} items):\n" + "\n".join(items)
+        label = f"Contents of {target.name}/"
+        if recursive:
+            label = f"Contents of {target.name}/ (recursive)"
+        return f"{label} ({len(items)} items):\n" + "\n".join(items)
 
     except PermissionError:
         return f"Permission denied: {path}"
@@ -487,23 +539,27 @@ def find_files(name: str = "", extension: str = "",
                 dir_count += 1
                 if dir_count > max_dirs:
                     break
+            if not item.exists():
                 continue
-            if not item.is_file():
+            if extension and item.is_dir():
                 continue
             if extension and item.suffix.lower() != extension.lower():
                 continue
             if name and name.lower() not in item.name.lower():
                 continue
-            size = _format_size(item.stat().st_size)
-            results.append(f"📄 {item.name} ({size}) — {item.parent}")
+            if item.is_dir():
+                results.append(f"📁 {item.name}/ — {item.parent}")
+            else:
+                size = _format_size(item.stat().st_size)
+                results.append(f"📄 {item.name} ({size}) — {item.parent}")
             if len(results) >= max_results:
                 break
 
         if not results:
-            query = name or extension or "files"
+            query = name or extension or "items"
             return f"No {query} found in {search_path.name}/"
 
-        return f"Found {len(results)} file(s):\n" + "\n".join(results)
+        return f"Found {len(results)} result(s):\n" + "\n".join(results)
 
     except Exception as e:
         return f"Search error: {e}"
@@ -651,7 +707,11 @@ def file_controller(
 
     try:
         if action == "list":
-            return list_files(path)
+            return list_files(
+                path,
+                show_hidden=bool(params.get("show_hidden", False)),
+                recursive=bool(params.get("recursive", False))
+            )
 
         elif action == "create_file":
             return create_file(path, name=name, content=params.get("content", ""))
@@ -675,6 +735,9 @@ def file_controller(
                 destination=params.get("destination", ""),
                 overwrite=bool(params.get("overwrite", False))
             )
+
+        elif action == "open":
+            return _open_target(( _resolve_path(path) / name ) if name else _resolve_path(path))
 
         elif action == "rename":
             return rename_file(path, name=name, new_name=params.get("new_name", ""))

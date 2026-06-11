@@ -11,7 +11,12 @@
       "updated": "2026-06-10"
     }
   },
-  "projects": {},
+  "projects": {
+    "individual_assistant_project": {
+      "value": "working on an individual assistant",
+      "updated": "2026-06-10"
+    }
+  },
   "relationships": {},
   "wishes": {},
   "notes": {}

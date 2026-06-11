@@ -517,8 +517,21 @@ class _BrowserSession:
         await self._launch()
         # If somehow page got closed, open a fresh one
         if self._page is None or self._page.is_closed():
-            self._page = await self._context.new_page()
-            await asyncio.sleep(0.2)
+            try:
+                # Verify context is still valid
+                if self._context is None:
+                    raise RuntimeError("Context is None")
+                # Try to create new page
+                self._page = await self._context.new_page()
+                await asyncio.sleep(0.2)
+            except Exception as e:
+                # If context is dead, relaunch entirely
+                print(f"[Browser] Context appears closed ({e}), relaunching...")
+                self._context = None
+                self._page = None
+                await self._launch()
+                self._page = await self._context.new_page()
+                await asyncio.sleep(0.2)
         return self._page
 
     async def go_to(self, url: str) -> str:
@@ -543,9 +556,10 @@ class _BrowserSession:
         if result_url in ("about:blank", "", None, prev_url) and prev_url in ("about:blank", "", None):
             print(f"[Browser] Still blank after goto — retrying on new tab: {url}")
             try:
-                new_page   = await self._context.new_page()
-                self._page = new_page
-                result_url = await _do_goto(new_page)
+                # Use new_tab method which has context validation
+                retry_result = await self.new_tab(url)
+                if "Opened:" in retry_result or "New tab opened" in retry_result:
+                    return retry_result
             except Exception as e:
                 print(f"[Browser] New-tab retry failed: {e}")
 
@@ -679,13 +693,28 @@ class _BrowserSession:
         return f"Could not find input: '{description}'"
 
     async def new_tab(self, url: str = "") -> str:
-        page = await self._get_page()
-        ctx  = page.context
-        new  = await ctx.new_page()
-        self._page = new
-        if url:
-            return await self.go_to(url)
-        return "New tab opened."
+        try:
+            page = await self._get_page()
+            ctx  = page.context
+            
+            # Verify context is still valid before creating new page
+            if ctx is None:
+                return "Context is closed. Please restart the browser."
+            
+            try:
+                new = await ctx.new_page()
+            except Exception as e:
+                # If context is dead, get fresh page through _get_page which will relaunch
+                print(f"[Browser] new_tab context error ({e}), using _get_page recovery...")
+                page = await self._get_page()
+                new = await page.context.new_page()
+            
+            self._page = new
+            if url:
+                return await self.go_to(url)
+            return "New tab opened."
+        except Exception as e:
+            return f"Failed to open new tab: {e}"
 
     async def close_tab(self) -> str:
         page = self._page
