@@ -13,9 +13,19 @@ param(
     [switch]$All
 )
 
-function Get-CurrentUserSid {
+function Get-CurrentUserIdentity {
     $current = [Security.Principal.WindowsIdentity]::GetCurrent()
-    return $current.User.Value
+    if (-not $current -or -not $current.User) {
+        throw "No se pudo resolver la identidad del usuario actual."
+    }
+
+    try {
+        # Usar NTAccount evita errores de traducción con FileSystemAccessRule
+        return $current.User.Translate([Security.Principal.NTAccount]).Value
+    } catch {
+        # Fallback por compatibilidad
+        return "$env:USERDOMAIN\$env:USERNAME"
+    }
 }
 
 function Grant-Permissions($path) {
@@ -24,18 +34,18 @@ function Grant-Permissions($path) {
         return
     }
 
-    $sid = Get-CurrentUserSid
+    $identity = Get-CurrentUserIdentity
+
     try {
         $acl = Get-Acl -Path $path
-    } catch {
-        Write-Host "No se pudo leer ACL para: $path" -ForegroundColor Red
-        return
-    }
-
-    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($sid, "Modify", "ContainerInherit, ObjectInherit", "None", "Allow")
-    $acl.SetAccessRule($rule)
-
-    try {
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $identity,
+            "Modify",
+            "ContainerInherit, ObjectInherit",
+            "None",
+            "Allow"
+        )
+        $acl.SetAccessRule($rule)
         Set-Acl -Path $path -AclObject $acl
         Write-Host "Permisos otorgados para: $path" -ForegroundColor Green
     } catch {
@@ -46,12 +56,12 @@ function Grant-Permissions($path) {
 
 # Common visible user folders
 $common = @(
-    Join-Path $env:USERPROFILE 'Desktop',
-    Join-Path $env:USERPROFILE 'Documents',
-    Join-Path $env:USERPROFILE 'Downloads',
-    Join-Path $env:USERPROFILE 'Pictures',
-    Join-Path $env:USERPROFILE 'Music',
-    Join-Path $env:USERPROFILE 'Videos'
+    (Join-Path -Path $env:USERPROFILE -ChildPath 'Desktop')
+    (Join-Path -Path $env:USERPROFILE -ChildPath 'Documents')
+    (Join-Path -Path $env:USERPROFILE -ChildPath 'Downloads')
+    (Join-Path -Path $env:USERPROFILE -ChildPath 'Pictures')
+    (Join-Path -Path $env:USERPROFILE -ChildPath 'Music')
+    (Join-Path -Path $env:USERPROFILE -ChildPath 'Videos')
 )
 
 if ($All) {
@@ -62,7 +72,10 @@ if ($All) {
         exit 1
     }
 
-    $dirs = Get-ChildItem -Path $env:USERPROFILE -Directory -Force | ForEach-Object { $_.FullName }
+    $dirs = Get-ChildItem -Path $env:USERPROFILE -Directory -Force |
+        Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } |
+        ForEach-Object { $_.FullName }
+
     foreach ($d in $dirs) {
         # opcional: saltar AppData por seguridad
         if ($d -match '\\AppData$') { continue }

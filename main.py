@@ -11,7 +11,7 @@ import numpy as np
 import google.genai as genai
 from google.genai import types
 
-from ui import JarvisUI
+from ui import RexUI
 from memory.memory_manager import load_memory, update_memory, format_memory_for_prompt
 from memory.conversation_history import save_session, format_history_for_prompt
 
@@ -188,17 +188,17 @@ TOOL_DECLARATIONS = [
 
 
 def main():
-    from model import JarvisModel
-    from controller import JarvisController
+    from model import RexModel
+    from controller import RexController
 
-    # 1. Crear Vista (JarvisUI)
-    ui = JarvisUI("face.png")
+    # 1. Crear Vista (RexUI)
+    ui = RexUI("face.png")
 
-    # 2. Crear Modelo (JarvisModel)
-    model = JarvisModel()
+    # 2. Crear Modelo (RexModel)
+    model = RexModel()
 
-    # 3. Crear Controlador (JarvisController) vinculando Vista y Modelo
-    controller = JarvisController(model, ui)
+    # 3. Crear Controlador (RexController) vinculando Vista y Modelo
+    controller = RexController(model, ui)
 
     # 4. Hilo de ejecución para el loop asíncrono gestionado por el Controlador
     def runner():

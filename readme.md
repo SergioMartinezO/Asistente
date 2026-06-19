@@ -1,85 +1,80 @@
 # 🤖 Asistente
-### The Ultimate Cross-Platform Personal AI Assistant — By FatihMakes
 
-> 📺 **[Watch the full setup video on YouTube](https://youtu.be/ej1f5OE3SNQ?si=lCxDhJix9ungq1Ry)**
+## The Ultimate Cross-Platform Personal AI Assistant
 
-A real-time voice AI that can hear, see, understand, and control your computer — on any OS. Supporting Windows, macOS, and Linux. Local execution. Zero subscriptions. Engineered for total autonomy.
+> Asistente is a real-time AI assistant that can **listen, see, reason, and control your computer**.
+
+Built for **Windows, macOS, and Linux**, it runs locally, supports rich tool use, and is designed for high autonomy with a natural conversational workflow.
 
 ---
 
 ## ✨ Overview
 
-Asistente represents the pinnacle of the Jarvis series, evolving into a more flexible and robust system. It bridges the gap between the operating system and human intent. Through natural dialogue, Asistente analyzes your screen, processes uploaded documents, and executes complex workflows with a brand-new, adaptive interface.
+Asistente is the most advanced evolution of the Rex series: faster, more stable, and significantly more flexible.
 
-It's not just an assistant — it's an extension of your digital life.
+It acts as a bridge between **human intent** and **operating-system execution**:
+
+- Understands natural language instructions
+- Interprets screen context and visual input
+- Processes files (documents, code, images)
+- Executes multi-step workflows with planning
+
+This is not just a chatbot — it is a practical desktop operator.
 
 ---
 
-## 🚀 Capabilities
+## 🚀 Core Capabilities
 
-### Core Features
 | Feature | Description |
-|---|---|
-| 🎙️ Real-time Voice | Ultra-low latency conversation in any language |
-| 🖥️ System Control | Launch apps, manage files, execute terminal commands |
-| 🧩 Autonomous Tasks | High-level planning for complex, multi-step goals |
-| 👁️ Visual Awareness | Real-time screen processing and webcam vision |
-| 🧠 Persistent Memory | Deeply remembers your projects, preferences, and personal context |
-| ⌨️ Hybrid Input | Seamlessly switch between keyboard typing and voice commands |
+| --- | --- |
+| 🎙️ Real-Time Voice | Low-latency multilingual conversations |
+| 🖥️ System Control | Open apps, manage files, run terminal commands |
+| 🧩 Autonomous Tasks | Plans and executes complex multi-step actions |
+| 👁️ Visual Awareness | Understands screen and webcam context |
+| 🧠 Persistent Memory | Remembers project and user-specific context |
+| ⌨️ Hybrid Input | Switch seamlessly between voice and typed commands |
 
 ---
 
-## 🆕 What's New in Asistente
+## 🆕 What’s New
 
-- 📂 **Advanced File Handling** — New support for direct file uploads. Drop PDFs, source code, or images into the assistant to have them analyzed, summarized, or edited instantly.
-- 🎨 **Adaptive & Flexible UI** — A complete overhaul of the interface. The new UI is fully resizable and responsive, featuring transparency controls and customizable layouts to fit your workspace perfectly.
-- 🐧🍎 **Refined Cross-Platform Stability** — Major fixes for macOS and Linux compatibility. Core system actions are now more consistent across all three major operating systems.
-- ⚡ **Optimized Core Engine** — Significant performance boost in tool-calling logic and response generation, resulting in a 40% faster interaction speed.
+- 📂 **Advanced File Handling** — Drag and upload PDFs, code, and images for instant analysis, summarization, or editing.
+- 🎨 **Adaptive UI** — Fully resizable and responsive interface with transparency and layout customization.
+- 🐧🍎 **Cross-Platform Stability Improvements** — Better consistency across Windows, macOS, and Linux.
+- ⚡ **Optimized Core Engine** — Faster tool-calling and response performance for smoother interactions.
 
 ---
 
 ## ⚡ Quick Start
 
-```bash
-git clone https://github.com/FatihMakes/Asistente.git
-cd Asistente
-pip install -r requirements.txt
-playwright install
-python main.py
+```python main.py
 ```
 
-> ⚠️ **Installation Note:** To keep the repository lightweight, some OS-specific dependencies are not bundled in `requirements.txt`. If you run into a `ModuleNotFoundError`, simply install the missing package via `pip install <module_name>` for your specific system.
+> ⚠️ **Installation note:** Some OS-specific dependencies are intentionally excluded from `requirements.txt` to keep the project lightweight. If needed, install missing modules manually:
+>
+> ```bash
+> pip install <module_name>
+> ```
 
 ---
 
 ## 📋 Requirements
 
 | Requirement | Details |
-|---|---|
+| --- | --- |
 | **OS** | Windows 10/11, macOS, or Linux |
 | **Python** | 3.11 or 3.12 |
-| **Microphone** | Required for voice interaction |
-| **API Key** | Free Gemini API key |
+| **Microphone** | Required for voice mode |
+| **API Key** | Gemini API key |
 
 ---
 
-## ⚠️ License
+## 🔐 Windows Permissions
 
-Personal and non-commercial use only.
-Licensed under **[Creative Commons BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)**.
+If Asistente needs write access to protected folders such as `Desktop` or `Documents`, see:
+
+- `docs/windows_permissions.md`
+- `scripts/grant_permissions.ps1`
+Run the PowerShell script following the guide in the docs
 
 ---
-
-## 👤 Connect with the Creator
-
-Engineered by a developer building a real-world JARVIS-style assistant.
-⭐ **Star the repository to support the journey to Mark 100.**
-
-| Platform | Link |
-|---|---|
-| YouTube | [@FatihMakes](https://www.youtube.com/@FatihMakes) |
-| Instagram | [@fatihmakes](https://www.instagram.com/fatihmakes) |
-
-## Permisos en Windows
-
-Si necesitas otorgar permisos de escritura al asistente en `Desktop` o `Documents`, revisa `docs/windows_permissions.md` y ejecuta `scripts/grant_permissions.ps1` con PowerShell.

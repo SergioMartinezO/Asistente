@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, Callable
 
 class BaseAction(ABC):
-    """Clase base abstracta para definir el contrato de las herramientas de JARVIS.
+    """Clase base abstracta para definir el contrato de las herramientas de REX.
     
     Establece las directrices de tipado estricto y asincronía obligatorias
     para garantizar la mantenibilidad y la robustez del framework de ingeniería.

@@ -18,9 +18,7 @@ BASE_DIR        = _get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 
-def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+# API Key is managed globally via config
 
 _MONTH_MAP: dict[str, int] = {
 
@@ -62,8 +60,7 @@ def _parse_date(raw: str) -> str:
             return val.strftime("%Y-%m-%d")
 
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=_get_api_key())
+        from core.config import genai_legacy as genai
         model    = genai.GenerativeModel("gemini-2.5-flash-lite")
         response = model.generate_content(
             f"Today is {today.strftime('%Y-%m-%d')}. "
@@ -152,9 +149,8 @@ def _parse_flights_with_gemini(
     destination: str,
     date:        str,
 ) -> list[dict]:
-    import google.generativeai as genai
+    from core.config import genai_legacy as genai
 
-    genai.configure(api_key=_get_api_key())
     model = genai.GenerativeModel(
         model_name="gemini-2.5-flash",
         system_instruction=(
@@ -238,7 +234,7 @@ def _format_text_report(
     page_url:    str,
 ) -> str:
     lines = [
-        "JARVIS — Flight Search Results",
+        "REX — Flight Search Results",
         "─" * 50,
         f"Route     : {origin} → {destination}",
         f"Date      : {date}",

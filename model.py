@@ -110,7 +110,7 @@ class SysMetricsTracker:
                 "tmp": self.tmp,
             }
 
-class JarvisModel:
+class RexModel:
     def __init__(self):
         self.base_dir = get_base_dir()
         self.config_dir = self.base_dir / "config"

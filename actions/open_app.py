@@ -2,6 +2,8 @@ import time
 import subprocess
 import platform
 import shutil
+import os
+import re
 
 try:
     import psutil
@@ -77,13 +79,28 @@ def _normalize(raw: str) -> str:
 
     return raw  
 
+
+def _is_safe_app_target_windows(app_name: str) -> bool:
+    """Basic validation to reduce command injection risk in app targets."""
+    if not app_name:
+        return False
+    # Block common command-chain characters
+    if any(ch in app_name for ch in ["&", "|", ";", "`", "\n", "\r"]):
+        return False
+    # Allow letters, numbers, spaces and common app/path chars
+    return bool(re.match(r'^[\w\s\.\-\\/:()]+$', app_name))
+
 def _launch_windows(app_name: str) -> bool:
 
-    if shutil.which(app_name) or shutil.which(app_name.split(".")[0]):
+    if not _is_safe_app_target_windows(app_name):
+        print(f"[open_app] Unsafe app target blocked: {app_name!r}")
+        return False
+
+    executable = shutil.which(app_name) or shutil.which(app_name.split(".")[0])
+    if executable:
         try:
             subprocess.Popen(
-                app_name,
-                shell=True,
+                [executable],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -94,7 +111,7 @@ def _launch_windows(app_name: str) -> bool:
 
     if ":" in app_name:
         try:
-            subprocess.Popen(f"start {app_name}", shell=True)
+            os.startfile(app_name)
             time.sleep(1.0)
             return True
         except Exception:

@@ -49,9 +49,7 @@ HEADERS = {
 _YT_VIDEO_FILTER = "EgIQAQ%3D%3D"
 
 
-def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+# API Key is managed globally via config
 
 
 def _open_url(url: str) -> None:
@@ -169,9 +167,8 @@ def _get_transcript(video_id: str) -> str | None:
 
 
 def _summarize_with_gemini(transcript: str, video_url: str) -> str:
-    import google.generativeai as genai
+    from core.config import genai_legacy as genai
 
-    genai.configure(api_key=_get_api_key())
     model = genai.GenerativeModel(
         model_name="gemini-2.5-flash",
         system_instruction=(

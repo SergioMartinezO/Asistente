@@ -16,6 +16,7 @@ except ImportError:
     _PYAUTOGUI = False
 
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
+_ALLOW_DYNAMIC_DESKTOP_EXEC = os.environ.get("REX_ALLOW_DYNAMIC_DESKTOP_EXEC", "false").lower() in ("1", "true", "yes")
 
 
 def _get_base_dir() -> Path:
@@ -81,6 +82,12 @@ def _build_sandbox() -> dict:
 
 
 def _execute_generated_code(code: str, player=None) -> str:
+    if not _ALLOW_DYNAMIC_DESKTOP_EXEC:
+        return (
+            "Dynamic desktop code execution is disabled for security reasons. "
+            "Set REX_ALLOW_DYNAMIC_DESKTOP_EXEC=true only in trusted environments."
+        )
+
     if not code or code.strip() == "UNSAFE":
         return "This action cannot be performed safely."
 
@@ -94,7 +101,7 @@ def _execute_generated_code(code: str, player=None) -> str:
     sandbox["__builtins__"]["print"] = lambda *a: output_lines.append(" ".join(str(x) for x in a))
 
     try:
-        exec(compile(code, "<jarvis_desktop>", "exec"), sandbox)
+        exec(compile(code, "<rex_desktop>", "exec"), sandbox)
         return "\n".join(output_lines) if output_lines else "Done."
     except Exception as e:
         print(f"[Desktop] Exec error: {e}\nCode:\n{code[:300]}")
@@ -103,8 +110,7 @@ def _execute_generated_code(code: str, player=None) -> str:
 
 def _ask_gemini_for_desktop_action(task: str) -> str:
 
-    import google.generativeai as genai
-    genai.configure(api_key=_get_api_key())
+    from core.config import genai_legacy as genai
     model = genai.GenerativeModel("gemini-2.5-flash")
 
     desktop = str(_get_desktop())
@@ -459,6 +465,12 @@ def desktop_control(
             return get_desktop_stats()
 
         elif action == "task" or task:
+            if not _ALLOW_DYNAMIC_DESKTOP_EXEC:
+                return (
+                    "Desktop AI task execution is disabled for security reasons. "
+                    "Use explicit actions like wallpaper, organize, clean, list, or stats."
+                )
+
             actual_task = task or params.get("description", "")
             if not actual_task:
                 return "Please describe what you want to do on the desktop."
@@ -472,6 +484,8 @@ def desktop_control(
 
         else:
             if action:
+                if not _ALLOW_DYNAMIC_DESKTOP_EXEC:
+                    return f"Unknown action '{action}'. Dynamic execution is disabled for security reasons."
                 code = _ask_gemini_for_desktop_action(action)
                 return _execute_generated_code(code, player=player)
             return "No action or task specified."

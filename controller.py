@@ -6,8 +6,9 @@ import sounddevice as sd
 import google.genai as genai
 from google.genai import types
 
-from ui import JarvisUI
-from model import JarvisModel
+from ui import RexUI
+from model import RexModel
+from core.config import get_gemini_client
 
 # Importar las declaraciones de herramientas (reutilizadas del main original o importadas)
 # Para evitar duplicar el bloque gigante de TOOL_DECLARATIONS, las importaremos o las volveremos a declarar.
@@ -27,8 +28,8 @@ def _clean_transcript(text: str) -> str:
     text = re.sub(r"[\x00-\x08\x0b-\x1f]", "", text)
     return text.strip()
 
-class JarvisController:
-    def __init__(self, model: JarvisModel, ui: JarvisUI):
+class RexController:
+    def __init__(self, model: RexModel, ui: RexUI):
         self.model = model
         self.ui = ui
         self.session = None
@@ -39,10 +40,14 @@ class JarvisController:
         self._speaking_lock = threading.Lock()
         self._turn_done_event = None
         self._retry_count = 0
+        self._pending_web_search = None
+        self._current_progress = 0
+        self._tool_counter = 0
+        self._active_instruction = ""
         
         # Servicio de Ingeniería asíncrono para cálculos complejos
         from concurrent.futures import ThreadPoolExecutor
-        self.engineering_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="JarvisEngineering")
+        self.engineering_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="RexEngineering")
         
         # Conectar callbacks de la Vista
         self.ui.on_text_command = self._on_text_command
@@ -56,6 +61,58 @@ class JarvisController:
         self._metrics_thread_running = True
         self._metrics_thread = threading.Thread(target=self._metrics_update_loop, daemon=True)
         self._metrics_thread.start()
+
+    def _begin_task(self, instruction: str):
+        self._active_instruction = instruction or ""
+        self._current_progress = 3
+        self._tool_counter = 0
+        self.ui.update_activity(
+            instruccion=self._active_instruction,
+            estado="Iniciado",
+            progreso=self._current_progress,
+            evento="Tarea iniciada"
+        )
+
+    def _advance_progress(self, target: int, estado: str | None = None, evento: str | None = None):
+        target = max(0, min(100, int(target)))
+        if target > self._current_progress:
+            self._current_progress = target
+        self.ui.update_activity(
+            estado=estado,
+            progreso=self._current_progress,
+            evento=evento
+        )
+
+    def _complete_task(self, evento: str = "Tarea completada"):
+        self._current_progress = 100
+        self.ui.update_activity(
+            estado="Completado",
+            progreso=100,
+            evento=evento
+        )
+
+    def _is_affirmative(self, text: str) -> bool:
+        t = (text or "").strip().lower()
+        return t in {"si", "sí", "s", "yes", "ok", "dale", "confirmo", "confirmar", "de acuerdo"}
+
+    def _is_negative(self, text: str) -> bool:
+        t = (text or "").strip().lower()
+        return t in {"no", "n", "cancelar", "cancela", "omitir", "stop", "detener"}
+
+    def _start_confirmed_web_search(self, request: dict):
+        def _run():
+            try:
+                from actions.web_search import web_search as web_search_action
+                args = dict(request.get("args") or {})
+                self._advance_progress(60, estado="En proceso", evento="Ejecutando búsqueda web confirmada")
+                result = web_search_action(parameters=args, player=self.ui) or "Sin resultados."
+                self.ui.write_log("Rex: Búsqueda web completada. Aquí tienes sugerencias/resultados:")
+                for line in str(result).splitlines():
+                    self.ui.write_log(f"Rex: {line}")
+                self._complete_task("Búsqueda web finalizada")
+            except Exception as e:
+                self.speak_error("web_search", e)
+        threading.Thread(target=_run, daemon=True).start()
 
     def _on_setup_done(self, key: str, os_name: str):
         self.model.save_config(key, os_name)
@@ -74,6 +131,26 @@ class JarvisController:
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
             return
+
+        # Confirmación explícita pendiente para búsquedas web
+        pending = self._pending_web_search
+        if pending is not None:
+            if self._is_affirmative(text):
+                self._pending_web_search = None
+                self.ui.write_log("SYS: Confirmación recibida. Iniciando búsqueda web...")
+                self._start_confirmed_web_search(pending)
+                return
+            if self._is_negative(text):
+                self._pending_web_search = None
+                self.ui.write_log("SYS: Búsqueda web cancelada por el usuario.")
+                self.ui.update_activity(
+                    estado="Cancelado",
+                    progreso=0,
+                    evento="Búsqueda web cancelada"
+                )
+                return
+        self._begin_task(text)
+        self._advance_progress(10, estado="En proceso", evento="Instrucción recibida")
         # Intercept voice/text triggers for local actions
         try:
             low = text.strip().lower()
@@ -94,6 +171,7 @@ class JarvisController:
             ),
             self._loop
         )
+        self._advance_progress(18, estado="En proceso", evento="Solicitud enviada al modelo")
 
     def set_speaking(self, value: bool):
         with self._speaking_lock:
@@ -109,16 +187,16 @@ class JarvisController:
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
         self.ui.write_log(f"ERR: {tool_name} — {short}")
-        self.speak(f"Sir, {tool_name} encountered an error. {short}")
+        self.speak(f"Se produjo un error en {tool_name}. {short}")
 
     def _on_permission_check(self, all_flag: bool = False):
         def _run():
             try:
                 from actions.permission_check import permission_check
                 if all_flag:
-                    self.ui.write_log("SYS: Running permission check (ALL folders)...")
+                    self.ui.write_log("SYS: Ejecutando comprobación de permisos (TODAS las carpetas)...")
                 else:
-                    self.ui.write_log("SYS: Running permission check (common folders)...")
+                    self.ui.write_log("SYS: Ejecutando comprobación de permisos (carpetas comunes)...")
                 res = permission_check(parameters={"all": all_flag})
                 # write report to log (may be long)
                 for line in res.splitlines():
@@ -173,6 +251,9 @@ class JarvisController:
 
         print(f"[REX] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
+        self._tool_counter += 1
+        start_progress = 25 + min(40, self._tool_counter * 12)
+        self._advance_progress(start_progress, estado="En proceso", evento=f"Ejecutando herramienta: {name}")
 
         if name == "save_memory":
             category = args.get("category", "notes")
@@ -189,7 +270,7 @@ class JarvisController:
             )
 
         loop = asyncio.get_event_loop()
-        result = "Done."
+        result = "Hecho."
 
         # Importar dinámicamente las herramientas correspondientes
         from actions.file_processor import file_processor
@@ -220,25 +301,25 @@ class JarvisController:
         try:
             if name == "open_app":
                 r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
-                result = r or f"Opened {args.get('app_name')}."
+                result = r or f"Aplicación abierta: {args.get('app_name')}."
             elif name == "weather_report":
                 r = await loop.run_in_executor(None, lambda: weather_action(parameters=args, player=self.ui))
-                result = r or "Weather delivered."
+                result = r or "Reporte del clima entregado."
             elif name == "browser_control":
                 r = await loop.run_in_executor(None, lambda: browser_control(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "file_controller":
                 r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "send_message":
                 r = await loop.run_in_executor(None, lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None))
-                result = r or f"Message sent to {args.get('receiver')}."
+                result = r or f"Mensaje enviado a {args.get('receiver')}."
             elif name == "reminder":
                 r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
-                result = r or "Reminder set."
+                result = r or "Recordatorio configurado."
             elif name == "youtube_video":
                 r = await loop.run_in_executor(None, lambda: youtube_video(parameters=args, response=None, player=self.ui))
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "screen_process":
                 threading.Thread(
                     target=screen_process,
@@ -246,28 +327,37 @@ class JarvisController:
                             "player": self.ui, "session_memory": None},
                     daemon=True
                 ).start()
-                result = "Vision module activated. Stay completely silent — vision module will speak directly."
+                result = "Módulo de visión activado. Mantén silencio: el módulo de visión hablará directamente."
             elif name == "computer_settings":
                 r = await loop.run_in_executor(None, lambda: computer_settings(parameters=args, response=None, player=self.ui))
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "desktop_control":
                 r = await loop.run_in_executor(None, lambda: desktop_control(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "code_helper":
                 r = await loop.run_in_executor(None, lambda: code_helper(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "dev_agent":
                 r = await loop.run_in_executor(None, lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "agent_task":
                 from agent.task_queue import get_queue, TaskPriority
                 priority_map = {"low": TaskPriority.LOW, "normal": TaskPriority.NORMAL, "high": TaskPriority.HIGH}
                 priority = priority_map.get(args.get("priority", "normal").lower(), TaskPriority.NORMAL)
                 task_id = get_queue().submit(goal=args.get("goal", ""), priority=priority, speak=self.speak)
-                result = f"Task started (ID: {task_id})."
+                result = f"Tarea iniciada (ID: {task_id})."
             elif name == "web_search":
-                r = await loop.run_in_executor(None, lambda: web_search_action(parameters=args, player=self.ui))
-                result = r or "Done."
+                query = args.get("query", "").strip()
+                items = args.get("items", [])
+                resumen = query or ", ".join(items) or "consulta web"
+                self._pending_web_search = {"args": args}
+                self.ui.update_activity(
+                    estado="En espera",
+                    progreso=max(self._current_progress, 30),
+                    evento="Esperando confirmación para búsqueda web"
+                )
+                self.ui.write_log(f"Rex: ¿Deseas que realice una búsqueda web sobre: '{resumen}'? Responde sí o no.")
+                result = "Búsqueda web pendiente de confirmación del usuario (sí/no)."
             elif name == "file_processor":
                 if not args.get("file_path") and self.ui.current_file:
                     args["file_path"] = self.ui.current_file
@@ -275,13 +365,13 @@ class JarvisController:
                     None,
                     lambda: file_processor(parameters=args, player=self.ui, speak=self.speak)
                 )
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "computer_control":
                 r = await loop.run_in_executor(None, lambda: computer_control(parameters=args, player=self.ui))
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "game_updater":
                 r = await loop.run_in_executor(None, lambda: game_updater(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "electronics":
                 from actions.electronics import ElectronicsAction
                 action_instance = ElectronicsAction()
@@ -289,25 +379,25 @@ class JarvisController:
                     self.engineering_executor,
                     lambda: asyncio.run(action_instance.execute(parameters=args, player=self.ui, speak_callback=self.speak))
                 )
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "dev_tools":
                 r = await loop.run_in_executor(None, lambda: dev_tools(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "mechatronics":
                 r = await loop.run_in_executor(None, lambda: mechatronics(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "datasheet_finder":
                 r = await loop.run_in_executor(None, lambda: datasheet_finder(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "materials_science":
                 r = await loop.run_in_executor(None, lambda: materials_science(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "proteus_automation":
                 r = await loop.run_in_executor(None, lambda: proteus_automation(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "ltspice_automation":
                 r = await loop.run_in_executor(None, lambda: ltspice_automation(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "matlab_link":
                 from actions.matlab_link import MatlabLinkAction
                 action_instance = MatlabLinkAction()
@@ -315,7 +405,7 @@ class JarvisController:
                     self.engineering_executor,
                     lambda: asyncio.run(action_instance.execute(parameters=args, player=self.ui, speak_callback=self.speak))
                 )
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "mecatronic_link":
                 from actions.mecatronic_link import MecatronicLinkAction
                 action_instance = MecatronicLinkAction()
@@ -323,12 +413,12 @@ class JarvisController:
                     self.engineering_executor,
                     lambda: asyncio.run(action_instance.execute(parameters=args, player=self.ui, speak_callback=self.speak))
                 )
-                result = r or "Done."
+                result = r or "Hecho."
             elif name == "flight_finder":
                 r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
-                result = r or "Done."
-            elif name == "shutdown_jarvis":
-                self.ui.write_log("SYS: Shutdown requested.")
+                result = r or "Hecho."
+            elif name == "shutdown_rex":
+                self.ui.write_log("SYS: Apagado solicitado.")
                 self.model.save_conversation_session()
                 self.speak("Hasta luego. Sesión guardada.")
                 def _shutdown():
@@ -339,14 +429,18 @@ class JarvisController:
                     os._exit(0)
                 threading.Thread(target=_shutdown, daemon=True).start()
             else:
-                result = f"Unknown tool: {name}"
+                result = f"Herramienta desconocida: {name}"
         except Exception as e:
-            result = f"Tool '{name}' failed: {e}"
+            result = f"La herramienta '{name}' falló: {e}"
             traceback.print_exc()
             self.speak_error(name, e)
 
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
+
+        if name != "web_search":
+            end_progress = min(90, self._current_progress + 15)
+            self._advance_progress(end_progress, estado="En proceso", evento=f"Acción finalizada: {name}")
 
         print(f"[REX] 📤 {name} → {str(result)[:80]}")
         return types.FunctionResponse(
@@ -393,7 +487,7 @@ class JarvisController:
                     await asyncio.sleep(0.1)
         except Exception as e:
             print(f"[REX] ❌ Mic: {e}")
-            self.ui.write_log(f"SYS: Microphone error — {e}")
+            self.ui.write_log(f"SYS: Error de micrófono — {e}")
             raise
 
     async def _receive_audio(self):
@@ -427,7 +521,7 @@ class JarvisController:
 
                             full_in = " ".join(in_buf).strip()
                             if full_in:
-                                self.ui.write_log(f"You: {full_in}")
+                                self.ui.write_log(f"Usuario: {full_in}")
                                 self.model.session_log.append({"role": "user", "text": full_in})
                             in_buf = []
 
@@ -436,6 +530,9 @@ class JarvisController:
                                 self.ui.write_log(f"Rex: {full_out}")
                                 self.model.session_log.append({"role": "rex", "text": full_out})
                             out_buf = []
+
+                            if self._pending_web_search is None:
+                                self._complete_task("Solicitud completada")
 
                     if response.tool_call:
                         fn_responses = []
@@ -493,10 +590,7 @@ class JarvisController:
         import atexit
         atexit.register(self.model.save_conversation_session)
         
-        client = genai.Client(
-            api_key=self.model.get_gemini_api_key(),
-            http_options={"api_version": "v1beta"}
-        )
+        client = get_gemini_client()
 
         while True:
             try:
@@ -516,7 +610,7 @@ class JarvisController:
 
                     print("[REX] ✅ Conectado....")
                     self.ui.set_state("LISTENING")
-                    self.ui.write_log("SYS: REX esta en linea.")
+                    self.ui.write_log("SYS: REX está en línea.")
 
                     tg.create_task(self._send_realtime())
                     tg.create_task(self._listen_audio())
@@ -528,7 +622,8 @@ class JarvisController:
                 traceback.print_exc()
                 self.set_speaking(False)
                 self.ui.set_state("THINKING")
-                self.ui.write_log(f"SYS: Connection error — {str(e)[:120]}")
+                self.ui.write_log(f"SYS: Error de conexión — {str(e)[:120]}")
+                self.ui.update_activity(estado="Error", progreso=0, evento="Error de conexión")
                 retry = getattr(self, '_retry_count', 0)
                 wait = min(3 * (2 ** retry), 60)
                 self._retry_count = retry + 1

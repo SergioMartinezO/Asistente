@@ -13,6 +13,10 @@
     "assistant_personality": {
       "value": "profesional y eficiente",
       "updated": "2026-06-10"
+    },
+    "default_save_path": {
+      "value": "Desktop/Home",
+      "updated": "2026-06-19"
     }
   },
   "projects": {

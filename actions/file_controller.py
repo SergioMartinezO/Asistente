@@ -233,13 +233,6 @@ def _open_target(target: Path) -> str:
             subprocess.Popen(["xdg-open", str(resolved)])
         return f"Opened: {resolved}"
     except Exception as e:
-        try:
-            if _OS == "Windows":
-                safe_path = str(target).replace('/', '\\').strip('"').strip("'")
-                subprocess.Popen(f'start "" "{safe_path}"', shell=True)
-                return f"Opened: {safe_path}"
-        except Exception:
-            pass
         return f"Could not open: {e}"
 
 

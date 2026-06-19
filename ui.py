@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from datetime import datetime
 
 import psutil
 
@@ -21,6 +22,7 @@ from PyQt6.QtGui import (
     QBrush, QColor, QDragEnterEvent, QDropEvent, QFont, QFontDatabase,
     QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
     QRadialGradient, QShortcut,
+    QTextImageFormat, QTextDocument, QTextCharFormat, QImage,
 )
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
@@ -583,63 +585,133 @@ class LogWidget(QTextEdit):
             }}
         """)
         self._queue: list[str] = []
-        self._typing  = False
-        self._text    = ""
-        self._pos     = 0
-        self._tag     = "sys"
-        self._tmr = QTimer(self)
-        self._tmr.timeout.connect(self._step)
+        self._icon_cache: dict[str, QPixmap] = {}
+        self._icon_registered: set[str] = set()
+        self._asset_icon_map = {
+            "you": BASE_DIR / "assets" / "ui" / "icons" / "usuario.svg",
+            "ai": BASE_DIR / "assets" / "ui" / "icons" / "asistente.svg",
+            "act": BASE_DIR / "assets" / "ui" / "icons" / "actividad.svg",
+            "file": BASE_DIR / "assets" / "ui" / "icons" / "archivo.svg",
+            "err": BASE_DIR / "assets" / "ui" / "icons" / "error.svg",
+            "sys": BASE_DIR / "assets" / "ui" / "icons" / "sistema.svg",
+        }
         self._sig.connect(self._enqueue)
 
     def append_log(self, text: str):
         self._sig.emit(text)
 
+    def _classify_event(self, text: str) -> tuple[str, str]:
+        raw = (text or "").strip()
+        tl = raw.lower()
+
+        if tl.startswith("usuario:"):
+            return "you", "Pregunta del usuario"
+        if tl.startswith("rex:"):
+            return "ai", "Respuesta del asistente"
+        if tl.startswith("act:"):
+            detail = raw[4:].strip() or "Evento de actividad"
+            return "act", detail
+        if tl.startswith("file:"):
+            return "file", "Evento de archivo"
+        if "err" in tl:
+            short = raw[:90] + ("…" if len(raw) > 90 else "")
+            return "err", short
+        return "sys", raw or "Evento del sistema"
+
+    def _icon_for_tag(self, tag: str) -> QPixmap:
+        if tag in self._icon_cache:
+            return self._icon_cache[tag]
+
+        # 1) Intentar cargar ícono SVG/PNG desde assets (preferido para UI moderna)
+        icon_path = self._asset_icon_map.get(tag)
+        if icon_path and icon_path.exists():
+            loaded = QPixmap(str(icon_path))
+            if not loaded.isNull():
+                pm = loaded.scaled(
+                    18,
+                    18,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                self._icon_cache[tag] = pm
+                return pm
+
+        # 2) Fallback programático para no romper ejecución
+        mapping = {
+            "you": ("?", qcol(C.WHITE), qcol(C.PRI_GHO)),
+            "ai": ("🔊", qcol(C.PRI), qcol(C.PRI_GHO)),
+            "act": ("⚙", qcol(C.ACC2), qcol(C.PRI_GHO)),
+            "file": ("📁", qcol(C.GREEN), qcol(C.PRI_GHO)),
+            "err": ("!", qcol(C.RED), qcol(C.PRI_GHO)),
+            "sys": ("i", qcol(C.TEXT_MED), qcol(C.PRI_GHO)),
+        }
+        symbol, fg, bg = mapping.get(tag, mapping["sys"])
+
+        pm = QPixmap(18, 18)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(bg))
+        p.drawEllipse(0, 0, 18, 18)
+        p.setPen(QPen(fg, 1))
+        p.setFont(QFont("Segoe UI Emoji", 9, QFont.Weight.Bold))
+        p.drawText(QRectF(0, 0, 18, 18), Qt.AlignmentFlag.AlignCenter, symbol)
+        p.end()
+
+        self._icon_cache[tag] = pm
+        return pm
+
     def _enqueue(self, text: str):
-        self._queue.append(text)
-        if not self._typing:
-            self._next()
+        tag, label = self._classify_event(text)
+        ts = datetime.now().strftime("%H:%M:%S")
 
-    def _next(self):
-        if not self._queue:
-            self._typing = False
-            return
-        self._typing = True
-        self._text   = self._queue.pop(0)
-        self._pos    = 0
-        tl = self._text.lower()
-        if   tl.startswith("you:"):    self._tag = "you"
-        elif tl.startswith("jarvis:") or tl.startswith("rex:"): self._tag = "ai"
-        elif tl.startswith("file:"):   self._tag = "file"
-        elif "err" in tl:              self._tag = "err"
-        else:                          self._tag = "sys"
-        self._tmr.start(6)
+        cur = self.textCursor()
+        cur.movePosition(cur.MoveOperation.End)
 
-    def _step(self):
-        if self._pos < len(self._text):
-            ch  = self._text[self._pos]
-            cur = self.textCursor()
-            fmt = cur.charFormat()
-            col = {
-                "you":  qcol(C.WHITE),
-                "ai":   qcol(C.PRI),
-                "err":  qcol(C.RED),
-                "file": qcol(C.GREEN),
-                "sys":  qcol(C.ACC2),
-            }.get(self._tag, qcol(C.TEXT))
-            fmt.setForeground(QBrush(col))
-            cur.movePosition(cur.MoveOperation.End)
-            cur.insertText(ch, fmt)
-            self.setTextCursor(cur)
-            self.ensureCursorVisible()
-            self._pos += 1
-        else:
-            self._tmr.stop()
-            cur = self.textCursor()
-            cur.movePosition(cur.MoveOperation.End)
-            cur.insertText("\n")
-            self.setTextCursor(cur)
-            self.ensureCursorVisible()
-            QTimer.singleShot(20, self._next)
+        # Tarjeta visual compacta: [hora] [icono] [evento]
+        card_fmt = QTextCharFormat()
+        card_fmt.setForeground(QBrush(qcol(C.TEXT_DIM)))
+        cur.insertText("• ", card_fmt)
+
+        # Timestamp
+        ts_fmt = QTextCharFormat()
+        ts_fmt.setForeground(QBrush(qcol(C.TEXT_DIM)))
+        cur.insertText(f"{ts}  ", ts_fmt)
+
+        # Icon image resource
+        icon_name = f"rex_icon_{tag}"
+        if icon_name not in self._icon_registered:
+            icon_image = self._icon_for_tag(tag).toImage()
+            if icon_image.isNull():
+                icon_image = QImage(14, 14, QImage.Format.Format_ARGB32)
+                icon_image.fill(Qt.GlobalColor.transparent)
+            self.document().addResource(
+                QTextDocument.ResourceType.ImageResource,
+                QUrl(icon_name),
+                icon_image,
+            )
+            self._icon_registered.add(icon_name)
+
+        img_fmt = QTextImageFormat()
+        img_fmt.setName(icon_name)
+        img_fmt.setWidth(14)
+        img_fmt.setHeight(14)
+        cur.insertImage(img_fmt)
+
+        msg_fmt = QTextCharFormat()
+        msg_fmt.setForeground(QBrush({
+            "you": qcol(C.WHITE),
+            "ai": qcol(C.PRI),
+            "act": qcol(C.ACC2),
+            "file": qcol(C.GREEN),
+            "err": qcol(C.RED),
+            "sys": qcol(C.TEXT_MED),
+        }.get(tag, qcol(C.TEXT))))
+        cur.insertText(f"  {label}\n", msg_fmt)
+
+        self.setTextCursor(cur)
+        self.ensureCursorVisible()
 
 _FILE_ICONS = {
     "image":   ("🖼", "#00d4ff"), "video":   ("🎬", "#ff6b00"),
@@ -734,7 +806,7 @@ class FileDropZone(QWidget):
 
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select a file for R.E.X", str(Path.home()),
+            self, "Selecciona un archivo para R.E.X", str(Path.home()),
             "All Files (*.*);;"
             "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg);;"
             "Documents (*.pdf *.docx *.txt *.md *.pptx);;"
@@ -795,7 +867,7 @@ class _DropCanvas(QWidget):
         p.setFont(QFont("Courier New", 8))
         p.setPen(QPen(qcol(C.PRI_DIM if not hover else C.TEXT), 1))
         p.drawText(QRectF(0, cy + 8, W, 16), Qt.AlignmentFlag.AlignCenter,
-                   "Drop file here  or  Click to Browse")
+                   "Suelta el archivo aquí  o  haz clic para explorar")
         p.setFont(QFont("Courier New", 7))
         p.setPen(QPen(qcol("#1a4a5a"), 1))
         p.drawText(QRectF(0, cy + 24, W, 14), Qt.AlignmentFlag.AlignCenter,
@@ -808,7 +880,7 @@ class _DropCanvas(QWidget):
         p.drawText(QRectF(0, cy - 24, W, 32), Qt.AlignmentFlag.AlignCenter, "⬇")
         p.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         p.setPen(QPen(qcol(C.PRI), 1))
-        p.drawText(QRectF(0, cy + 12, W, 16), Qt.AlignmentFlag.AlignCenter, "Release to load")
+        p.drawText(QRectF(0, cy + 12, W, 16), Qt.AlignmentFlag.AlignCenter, "Suelta para cargar")
 
     def _paint_file(self, p, W, H):
         path = Path(self._z._current_file)
@@ -888,15 +960,15 @@ class SetupOverlay(QWidget):
             w.setStyleSheet(f"color: {color}; background: transparent;")
             return w
 
-        layout.addWidget(_lbl("◈  INITIALISATION REQUIRED", 13, True))
-        layout.addWidget(_lbl("Configure R.E.X before first boot.", 9, color=C.PRI_DIM))
+        layout.addWidget(_lbl("◈  CONFIGURACIÓN INICIAL REQUERIDA", 13, True))
+        layout.addWidget(_lbl("Configura R.E.X antes del primer inicio.", 9, color=C.PRI_DIM))
         layout.addSpacing(6)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep)
         layout.addSpacing(4)
 
-        layout.addWidget(_lbl("GEMINI API KEY", 8, color=C.TEXT_DIM,
+        layout.addWidget(_lbl("CLAVE API DE GEMINI", 8, color=C.TEXT_DIM,
                                align=Qt.AlignmentFlag.AlignLeft))
         self._key_input = QLineEdit()
         self._key_input.setEchoMode(QLineEdit.EchoMode.Password)
@@ -917,10 +989,10 @@ class SetupOverlay(QWidget):
         sep2.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep2)
         layout.addSpacing(4)
 
-        layout.addWidget(_lbl("OPERATING SYSTEM", 8, color=C.TEXT_DIM,
+        layout.addWidget(_lbl("SISTEMA OPERATIVO", 8, color=C.TEXT_DIM,
                                align=Qt.AlignmentFlag.AlignLeft))
         det_name = {"windows": "Windows", "mac": "macOS", "linux": "Linux"}[detected]
-        layout.addWidget(_lbl(f"Auto-detected: {det_name}", 8, color=C.ACC2,
+        layout.addWidget(_lbl(f"Detectado automáticamente: {det_name}", 8, color=C.ACC2,
                                align=Qt.AlignmentFlag.AlignLeft))
 
         os_row = QHBoxLayout(); os_row.setSpacing(6)
@@ -937,7 +1009,7 @@ class SetupOverlay(QWidget):
         self._sel(detected)
         layout.addSpacing(12)
 
-        init_btn = QPushButton("▸  INITIALISE SYSTEMS")
+        init_btn = QPushButton("▸  INICIALIZAR SISTEMA")
         init_btn.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
         init_btn.setFixedHeight(36)
         init_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -988,6 +1060,7 @@ class SetupOverlay(QWidget):
 class MainWindow(QMainWindow):
     _log_sig   = pyqtSignal(str)
     _state_sig = pyqtSignal(str)
+    _activity_sig = pyqtSignal(object)
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -1042,6 +1115,7 @@ class MainWindow(QMainWindow):
 
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
+        self._activity_sig.connect(self._apply_activity_update)
 
         self._overlay: SetupOverlay | None = None
         self._ready = self._check_config()
@@ -1142,7 +1216,7 @@ class MainWindow(QMainWindow):
         title.setFont(QFont("Courier New", 17, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         mid.addWidget(title)
-        sub = QLabel("Responsive Expert eXecutor")
+        sub = QLabel("Ejecutor Experto Responsivo")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sub.setFont(QFont("Courier New", 7))
         sub.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent;")
@@ -1176,7 +1250,7 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(8, 10, 8, 10)
         lay.setSpacing(6)
 
-        hdr = QLabel("◈ SYS MONITOR")
+        hdr = QLabel("◈ MONITOR DEL SISTEMA")
         hdr.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
         hdr.setStyleSheet(f"color: {C.PRI}; background: transparent; "
                           f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;")
@@ -1223,9 +1297,9 @@ class MainWindow(QMainWindow):
         lay.addStretch()
 
         for txt, col in [
-            ("AI CORE\nACTIVE",     C.GREEN),
-            ("SEC\nCLEARED",        C.PRI),
-            ("PROTOCOL\nXXXVIII",   C.TEXT_DIM),
+            ("NÚCLEO IA\nACTIVO",     C.GREEN),
+            ("SEGURIDAD\nACTIVA",      C.PRI),
+            ("PROTOCOLO\nXXXVIII",     C.TEXT_DIM),
         ]:
             lbl = QLabel(txt)
             lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
@@ -1251,7 +1325,50 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
             return l
 
-        lay.addWidget(_sec("ACTIVITY LOG"))
+        lay.addWidget(_sec("BITÁCORA VISUAL DE ACTIVIDAD"))
+
+        activity_card = QWidget()
+        activity_card.setStyleSheet(
+            f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 4px;"
+        )
+        ac_lay = QVBoxLayout(activity_card)
+        ac_lay.setContentsMargins(6, 6, 6, 6)
+        ac_lay.setSpacing(4)
+
+        self._activity_status_lbl = QLabel("Estado: En espera")
+        self._activity_status_lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._activity_status_lbl.setStyleSheet(f"color: {C.ACC2}; background: transparent; border: none;")
+
+        self._activity_instruction_lbl = QLabel("Instrucción activa: —")
+        self._activity_instruction_lbl.setWordWrap(True)
+        self._activity_instruction_lbl.setFont(QFont("Courier New", 7))
+        self._activity_instruction_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent; border: none;")
+
+        self._activity_progress = QProgressBar()
+        self._activity_progress.setMinimum(0)
+        self._activity_progress.setMaximum(100)
+        self._activity_progress.setValue(0)
+        self._activity_progress.setFormat("%p%")
+        self._activity_progress.setStyleSheet(f"""
+            QProgressBar {{
+                background: {C.BAR_BG};
+                border: 1px solid {C.BORDER};
+                border-radius: 3px;
+                text-align: center;
+                color: {C.WHITE};
+                height: 14px;
+            }}
+            QProgressBar::chunk {{
+                background: {C.GREEN};
+                border-radius: 2px;
+            }}
+        """)
+
+        ac_lay.addWidget(self._activity_status_lbl)
+        ac_lay.addWidget(self._activity_instruction_lbl)
+        ac_lay.addWidget(self._activity_progress)
+        lay.addWidget(activity_card)
+
         self._log = LogWidget()
         lay.addWidget(self._log, stretch=1)
 
@@ -1259,12 +1376,12 @@ class MainWindow(QMainWindow):
         sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
         lay.addWidget(sep)
 
-        lay.addWidget(_sec("FILE UPLOAD"))
+        lay.addWidget(_sec("CARGA DE ARCHIVOS"))
         self._drop_zone = FileDropZone()
         self._drop_zone.file_selected.connect(self._on_file_selected)
         lay.addWidget(self._drop_zone)
 
-        self._file_hint = QLabel("No file loaded — drop or click above to upload")
+        self._file_hint = QLabel("Ningún archivo cargado — suelta o haz clic arriba para cargar")
         self._file_hint.setFont(QFont("Courier New", 7))
         self._file_hint.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
         self._file_hint.setWordWrap(True)
@@ -1274,10 +1391,10 @@ class MainWindow(QMainWindow):
         sep2.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
         lay.addWidget(sep2)
 
-        lay.addWidget(_sec("COMMAND INPUT"))
+        lay.addWidget(_sec("ENTRADA DE COMANDOS"))
         lay.addLayout(self._build_input_row())
 
-        self._mute_btn = QPushButton("🎙  MICROPHONE ACTIVE")
+        self._mute_btn = QPushButton("🎙  MICRÓFONO ACTIVO")
         self._mute_btn.setFixedHeight(30)
         self._mute_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         self._mute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1285,7 +1402,7 @@ class MainWindow(QMainWindow):
         self._style_mute_btn()
         lay.addWidget(self._mute_btn)
 
-        fs_btn = QPushButton("⛶  FULLSCREEN  [F11]")
+        fs_btn = QPushButton("⛶  PANTALLA COMPLETA  [F11]")
         fs_btn.setFixedHeight(26)
         fs_btn.setFont(QFont("Courier New", 7))
         fs_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1317,7 +1434,7 @@ class MainWindow(QMainWindow):
     def _build_input_row(self) -> QHBoxLayout:
         row = QHBoxLayout(); row.setSpacing(5)
         self._input = QLineEdit()
-        self._input.setPlaceholderText("Type a command or question…")
+        self._input.setPlaceholderText("Escribe un comando o una pregunta…")
         self._input.setFont(QFont("Courier New", 9))
         self._input.setFixedHeight(30)
         self._input.setStyleSheet(f"""
@@ -1356,11 +1473,11 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {color}; background: transparent;")
             return l
 
-        lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
+        lay.addWidget(_fl("[F4] Silenciar  ·  [F11] Pantalla completa"))
         lay.addStretch()
-        lay.addWidget(_fl("FatihMakes Industries  ·  Asistente  ·  CLASSIFIED"))
+        lay.addWidget(_fl("Asistente  ·  CLASIFICADO"))
         lay.addStretch()
-        lay.addWidget(_fl("© FATIHMAKES", C.PRI_DIM))
+        lay.addWidget(_fl("© Asistente", C.PRI_DIM))
         return w
 
     def _on_file_selected(self, path: str):
@@ -1369,14 +1486,14 @@ class MainWindow(QMainWindow):
         cat  = _file_category(p)
         icon, _ = _FILE_ICONS.get(cat, _FILE_ICONS["unknown"])
         size = _fmt_size(p.stat().st_size)
-        self._file_hint.setText(f"{icon}  {p.name}  ·  {size}  ·  Tell R.E.X what to do with it")
-        self._log.append_log(f"FILE: {p.name} ({size}) loaded")
+        self._file_hint.setText(f"{icon}  {p.name}  ·  {size}  ·  Indica a R.E.X qué hacer con este archivo")
+        self._log.append_log(f"FILE: {p.name} ({size}) cargado")
         if self.on_text_command:
             msg = (
                 f"[FILE_UPLOADED] path={path} | name={p.name} | "
                 f"type={p.suffix.lstrip('.')} | size={size} | "
-                f"Briefly tell the user you can see the file '{p.name}' "
-                f"({size}) has been uploaded and ask what they'd like to do with it."
+                f"Indica brevemente al usuario que ves el archivo '{p.name}' "
+                f"({size}) cargado y pregunta qué desea hacer con él."
             )
             threading.Thread(target=self.on_text_command, args=(msg,), daemon=True).start()
 
@@ -1390,7 +1507,7 @@ class MainWindow(QMainWindow):
         dlg.setDefaultButton(QMessageBox.StandardButton.No)
         resp = dlg.exec()
         if resp == QMessageBox.StandardButton.Cancel:
-            self._log.append_log("SYS: Permission check canceled by user.")
+            self._log.append_log("SYS: Comprobación de permisos cancelada por el usuario.")
             return
         all_flag = (resp == QMessageBox.StandardButton.Yes)
         if self.on_permission_check:
@@ -1402,14 +1519,14 @@ class MainWindow(QMainWindow):
         self._style_mute_btn()
         if self._muted:
             self._apply_state("MUTED")
-            self._log.append_log("SYS: Microphone muted.")
+            self._log.append_log("SYS: Micrófono silenciado.")
         else:
             self._apply_state("LISTENING")
-            self._log.append_log("SYS: Microphone active.")
+            self._log.append_log("SYS: Micrófono activo.")
 
     def _style_mute_btn(self):
         if self._muted:
-            self._mute_btn.setText("🔇  MICROPHONE MUTED")
+            self._mute_btn.setText("🔇  MICRÓFONO SILENCIADO")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: #140006; color: {C.MUTED_C};
@@ -1417,7 +1534,7 @@ class MainWindow(QMainWindow):
                 }}
             """)
         else:
-            self._mute_btn.setText("🎙  MICROPHONE ACTIVE")
+            self._mute_btn.setText("🎙  MICRÓFONO ACTIVO")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: #00140a; color: {C.GREEN};
@@ -1430,7 +1547,7 @@ class MainWindow(QMainWindow):
         txt = self._input.text().strip()
         if not txt: return
         self._input.clear()
-        self._log.append_log(f"You: {txt}")
+        self._log.append_log(f"Usuario: {txt}")
         if self.on_text_command:
             threading.Thread(target=self.on_text_command, args=(txt,), daemon=True).start()
 
@@ -1465,10 +1582,28 @@ class MainWindow(QMainWindow):
             self._overlay.hide()
             self._overlay = None
         self._apply_state("LISTENING")
-        self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. Rex online.")
+        self._log.append_log(f"SYS: Inicializado. SO={os_name.upper()}. Rex en línea.")
         # Propagar evento de configuración al controlador si existe
         if hasattr(self, 'on_setup_done_callback') and self.on_setup_done_callback:
             self.on_setup_done_callback(key, os_name)
+
+    def _apply_activity_update(self, payload: object):
+        if not isinstance(payload, dict):
+            return
+        estado = payload.get("estado")
+        instruccion = payload.get("instruccion")
+        progreso = payload.get("progreso")
+        evento = payload.get("evento")
+
+        if estado:
+            self._activity_status_lbl.setText(f"Estado: {estado}")
+        if instruccion is not None:
+            short = (instruccion[:90] + "…") if len(instruccion) > 90 else instruccion
+            self._activity_instruction_lbl.setText(f"Instrucción activa: {short if short else '—'}")
+        if isinstance(progreso, (int, float)):
+            self._activity_progress.setValue(max(0, min(100, int(progreso))))
+        if evento:
+            self._log.append_log(f"ACT: {evento}")
 
 
 class _RootShim:
@@ -1480,7 +1615,7 @@ class _RootShim:
         pass
 
 
-class JarvisUI:
+class RexUI:
     def __init__(self, face_path: str, size=None):
         self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
@@ -1530,6 +1665,15 @@ class JarvisUI:
 
     def write_log(self, text: str):
         self._win._log_sig.emit(text)
+
+    def update_activity(self, instruccion: str | None = None, estado: str | None = None,
+                        progreso: int | None = None, evento: str | None = None):
+        self._win._activity_sig.emit({
+            "instruccion": instruccion,
+            "estado": estado,
+            "progreso": progreso,
+            "evento": evento,
+        })
 
     def wait_for_api_key(self):
         while not self._win._ready:
