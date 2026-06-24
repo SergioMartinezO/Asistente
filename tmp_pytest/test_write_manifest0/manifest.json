@@ -1,0 +1,36 @@
+{
+  "project_title": "ProyectoTest",
+  "generated_at": "2026-06-23T21:13:43",
+  "files": {
+    "graphviz_png": {
+      "path": "D:\\IA\\Asistente\\tmp_pytest\\test_write_manifest0\\diagrama_bloques_graphviz.png",
+      "exists": true,
+      "size_bytes": 3
+    },
+    "graphviz_svg": {
+      "path": "D:\\IA\\Asistente\\tmp_pytest\\test_write_manifest0\\diagrama_bloques_graphviz.svg",
+      "exists": true,
+      "size_bytes": 11
+    },
+    "circuit_png": {
+      "path": "D:\\IA\\Asistente\\tmp_pytest\\test_write_manifest0\\diagrama_circuito_graphviz.png",
+      "exists": false,
+      "size_bytes": 0
+    },
+    "circuit_svg": {
+      "path": "D:\\IA\\Asistente\\tmp_pytest\\test_write_manifest0\\diagrama_circuito_graphviz.svg",
+      "exists": false,
+      "size_bytes": 0
+    },
+    "mermaid_png": {
+      "path": "D:\\IA\\Asistente\\tmp_pytest\\test_write_manifest0\\diagrama_flujo_mermaid.png",
+      "exists": false,
+      "size_bytes": 0
+    },
+    "mermaid_svg": {
+      "path": "D:\\IA\\Asistente\\tmp_pytest\\test_write_manifest0\\diagrama_flujo_mermaid.svg",
+      "exists": false,
+      "size_bytes": 0
+    }
+  }
+}

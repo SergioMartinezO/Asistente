@@ -9,6 +9,8 @@ def test_expected_bundle_paths(tmp_path: Path):
     d = bundle.as_dict()
     assert d["graphviz_png"].name == "diagrama_bloques_graphviz.png"
     assert d["graphviz_svg"].name == "diagrama_bloques_graphviz.svg"
+    assert d["circuit_png"].name == "diagrama_circuito_graphviz.png"
+    assert d["circuit_svg"].name == "diagrama_circuito_graphviz.svg"
     assert d["mermaid_png"].name == "diagrama_flujo_mermaid.png"
     assert d["mermaid_svg"].name == "diagrama_flujo_mermaid.svg"
 
@@ -26,4 +28,5 @@ def test_write_manifest(tmp_path: Path):
     assert data["project_title"] == "ProyectoTest"
     assert "files" in data
     assert data["files"]["graphviz_png"]["exists"] is True
+    assert data["files"]["circuit_png"]["exists"] is False
     assert data["files"]["mermaid_png"]["exists"] is False

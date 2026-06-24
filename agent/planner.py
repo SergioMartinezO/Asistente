@@ -7,7 +7,7 @@ from pathlib import Path
 from core.config import get_gemini_client
 
 
-PLANNER_PROMPT = """You are the planning module of Asistente, a personal AI assistant.
+PLANNER_PROMPT = """You are the planning module of Asistente Rex, a personal AI assistant.
 Your job: break any user goal into a sequence of steps using ONLY the tools listed below.
 
 ABSOLUTE RULES:

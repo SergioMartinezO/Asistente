@@ -10,6 +10,8 @@ import json
 class DiagramBundle:
     graphviz_png: Path
     graphviz_svg: Path
+    circuit_png: Path
+    circuit_svg: Path
     mermaid_png: Path
     mermaid_svg: Path
 
@@ -17,6 +19,8 @@ class DiagramBundle:
         return {
             "graphviz_png": self.graphviz_png,
             "graphviz_svg": self.graphviz_svg,
+            "circuit_png": self.circuit_png,
+            "circuit_svg": self.circuit_svg,
             "mermaid_png": self.mermaid_png,
             "mermaid_svg": self.mermaid_svg,
         }
@@ -29,6 +33,8 @@ def expected_bundle(diagram_dir: Path) -> DiagramBundle:
     return DiagramBundle(
         graphviz_png=diagram_dir / "diagrama_bloques_graphviz.png",
         graphviz_svg=diagram_dir / "diagrama_bloques_graphviz.svg",
+        circuit_png=diagram_dir / "diagrama_circuito_graphviz.png",
+        circuit_svg=diagram_dir / "diagrama_circuito_graphviz.svg",
         mermaid_png=diagram_dir / "diagrama_flujo_mermaid.png",
         mermaid_svg=diagram_dir / "diagrama_flujo_mermaid.svg",
     )

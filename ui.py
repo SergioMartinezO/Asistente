@@ -1273,7 +1273,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, face_path: str):
         super().__init__()
-        self.setWindowTitle("Asistente")
+        self.setWindowTitle("Asistente Rex")
         self.setMinimumSize(_MIN_W, _MIN_H)
         self.resize(_DEFAULT_W, _DEFAULT_H)
 
@@ -1419,7 +1419,7 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {color}; background: transparent;")
             return l
 
-        lay.addWidget(_badge("Asistente", C.PRI_DIM))
+        lay.addWidget(_badge("Asistente Rex", C.PRI_DIM))
         lay.addStretch()
 
         mid = QVBoxLayout(); mid.setSpacing(1)
@@ -1511,7 +1511,7 @@ class MainWindow(QMainWindow):
         for txt, col in [
             ("NÚCLEO IA\nACTIVO",     C.GREEN),
             ("SEGURIDAD\nACTIVA",      C.PRI),
-            ("PROTOCOLO\nXXXVIII",     C.TEXT_DIM),
+            ("PROTOCOLO\nREX",         C.TEXT_DIM),
         ]:
             lbl = QLabel(txt)
             lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
@@ -1717,9 +1717,9 @@ class MainWindow(QMainWindow):
 
         lay.addWidget(_fl("[F4] Silenciar  ·  [F11] Pantalla completa"))
         lay.addStretch()
-        lay.addWidget(_fl("Asistente  ·  CLASIFICADO"))
+        lay.addWidget(_fl("Asistente Rex  ·  CLASIFICADO"))
         lay.addStretch()
-        lay.addWidget(_fl("© Asistente", C.PRI_DIM))
+        lay.addWidget(_fl("© Asistente Rex", C.PRI_DIM))
         return w
 
     def _on_file_selected(self, path: str):
@@ -1851,11 +1851,12 @@ class MainWindow(QMainWindow):
     def _consume_diagram_event(self, evento: str):
         evt = str(evento or "")
 
-        m_gen = re.search(r"Diagramas generados:\s*(\d+)\s*/\s*4", evt, re.IGNORECASE)
+        m_gen = re.search(r"Diagramas generados:\s*(\d+)\s*/\s*(4|6)", evt, re.IGNORECASE)
         if m_gen:
-            self._diag_generated = max(0, min(4, int(m_gen.group(1))))
+            max_gen = int(m_gen.group(2))
+            self._diag_generated = max(0, min(max_gen, int(m_gen.group(1))))
 
-        m_word = re.search(r"Diagramas en Word:\s*(\d+)\s*/\s*(2|4)", evt, re.IGNORECASE)
+        m_word = re.search(r"Diagramas en Word:\s*(\d+)\s*/\s*(2|3|4)", evt, re.IGNORECASE)
         if m_word:
             max_word = int(m_word.group(2))
             self._diag_word = max(0, min(max_word, int(m_word.group(1))))
@@ -1867,14 +1868,14 @@ class MainWindow(QMainWindow):
 
         # Peso de integración: generación 40%, Word 30%, Web 30%
         score = (
-            (self._diag_generated / 4.0) * 0.40
-            + (self._diag_word / 4.0) * 0.30
+            (self._diag_generated / 6.0) * 0.40
+            + (self._diag_word / 3.0) * 0.30
             + (self._diag_web / 6.0) * 0.30
         )
         pct = int(round(score * 100))
         self._diagram_progress.setValue(max(0, min(100, pct)))
         self._diagram_status_lbl.setText(
-            f"Integración de diagramas: {pct}%  (G:{self._diag_generated}/4  W:{self._diag_word}/4  Web:{self._diag_web}/6)"
+            f"Integración de diagramas: {pct}%  (G:{self._diag_generated}/6  W:{self._diag_word}/3  Web:{self._diag_web}/6)"
         )
 
         if pct >= 100:

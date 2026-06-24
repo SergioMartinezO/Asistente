@@ -13,16 +13,64 @@ def _log(player, message: str):
         player.write_log(message)
 
 
-def _phase_start(player, phase: str, lines: List[str]):
+_PHASE_MESSAGES = {
+    ("Hardware", "start"): "Iniciando fase de hardware.",
+    ("Hardware", "end"): "Hardware completado.",
+    ("Software", "start"): "Iniciando fase de software.",
+    ("Software", "end"): "Software completado.",
+    ("Diagramas", "start"): "Generando diagramas. Esto puede tardar unos segundos.",
+    ("Diagramas", "end"): "Diagramas generados correctamente.",
+    ("Word", "start"): "Construyendo el documento Word.",
+    ("Word", "end"): "Documento Word guardado correctamente.",
+    ("Web", "start"): "Construyendo la página web.",
+    ("Web", "end"): "Página web generada. Reporte completo.",
+}
+
+
+def _phase_start(player, phase: str, lines: List[str], speak=None, progress: int = 0):
     msg = f"[FASE] ▶ INICIO: {phase}"
     _log(player, msg)
     lines.append(msg)
+    if player and hasattr(player, "update_activity"):
+        try:
+            player.update_activity(
+                estado="En proceso",
+                progreso=progress,
+                evento=f"Fase {phase} - Iniciada"
+            )
+        except Exception:
+            pass
+    if speak:
+        phrase = _PHASE_MESSAGES.get((phase, "start"), f"Iniciando fase de {phase.lower()}.")
+        try:
+            speak(phrase)
+            import time
+            time.sleep(1.2)
+        except Exception:
+            pass
 
 
-def _phase_end(player, phase: str, lines: List[str]):
+def _phase_end(player, phase: str, lines: List[str], speak=None, progress: int = 0):
     msg = f"[FASE] ✅ FIN: {phase}"
     _log(player, msg)
     lines.append(msg)
+    if player and hasattr(player, "update_activity"):
+        try:
+            player.update_activity(
+                estado="En proceso",
+                progreso=progress,
+                evento=f"Fase {phase} - Concluida"
+            )
+        except Exception:
+            pass
+    if speak:
+        phrase = _PHASE_MESSAGES.get((phase, "end"), f"Fase de {phase.lower()} completada.")
+        try:
+            speak(phrase)
+            import time
+            time.sleep(1.2)
+        except Exception:
+            pass
 
 
 def _safe_replace_placeholders(doc: Any, replacements: Dict[str, str]):
@@ -99,13 +147,17 @@ def _write_fallback_png(png_path: Path, title: str):
 
 
 def _ensure_diagram_bundle(diagram_dir: Path, project_title: str) -> Dict[str, Path]:
-    """Garantiza el bundle de 4 diagramas esperados (2 png + 2 svg)."""
+    """Garantiza el bundle de 6 diagramas esperados (3 png + 3 svg)."""
     expected = expected_bundle(diagram_dir).as_dict()
 
     if not expected["graphviz_png"].exists():
         _write_fallback_png(expected["graphviz_png"], project_title)
     if not expected["graphviz_svg"].exists():
         _write_fallback_svg(expected["graphviz_svg"], project_title)
+    if not expected["circuit_png"].exists():
+        _write_fallback_png(expected["circuit_png"], f"Circuito esquemático - {project_title}")
+    if not expected["circuit_svg"].exists():
+        _write_fallback_svg(expected["circuit_svg"], f"Circuito esquemático - {project_title}")
     if not expected["mermaid_png"].exists():
         _write_fallback_png(expected["mermaid_png"], project_title)
     if not expected["mermaid_svg"].exists():
@@ -133,15 +185,45 @@ digraph control_producto {
   node  [shape=box, style="rounded,filled", fillcolor="#eaf6ff", color="#2f6f9f", fontname="Segoe UI"];
   edge  [color="#4d6b80", penwidth=1.4];
 
-  I [label="Entradas/Sensores"];
-  P [label="Procesamiento MCU"];
-  A [label="Actuadores"];
-  R [label="Retroalimentación"];
+  subgraph cluster_0 {
+    label="Etapa de Alimentación";
+    color="#16a34a";
+    fillcolor="#f0fdf4";
+    style="filled,rounded";
+    REG [label="Regulador de Voltaje\\n(Filtrado y Estabilización)", fillcolor="#dcfce7", color="#16a34a"];
+  }
 
-  I -> P;
-  P -> A;
-  A -> R;
-  R -> P;
+  subgraph cluster_1 {
+    label="Etapa de Acondicionamiento de Señal";
+    color="#ea580c";
+    fillcolor="#fff7ed";
+    style="filled,rounded";
+    SEN [label="Sensores / Entradas"];
+    FILT [label="Filtro RC / Amplificador\\n(Reducción de Ruido)", fillcolor="#ffedd5", color="#ea580c"];
+    SEN -> FILT;
+  }
+
+  subgraph cluster_2 {
+    label="Etapa de Procesamiento";
+    color="#2563eb";
+    fillcolor="#eff6ff";
+    style="filled,rounded";
+    MCU [label="Microcontrolador principal\\n(ESP32 / MCU)", fillcolor="#dbeafe", color="#2563eb"];
+  }
+
+  subgraph cluster_3 {
+    label="Etapa de Interfaz";
+    color="#7c3aed";
+    fillcolor="#f5f3ff";
+    style="filled,rounded";
+    ACT [label="Actuadores / Salidas"];
+    INT [label="Optoacopladores / Drivers\\n(Aislamiento Galvánico)", fillcolor="#ede9fe", color="#7c3aed"];
+    INT -> ACT;
+  }
+
+  REG -> MCU [label="VCC (3.3V/5V)"];
+  FILT -> MCU [label="Señal Acondicionada"];
+  MCU -> INT [label="GPIO Control"];
 }
 """.strip()
 
@@ -200,22 +282,46 @@ digraph circuito_esquematico {
   node  [shape=box, style="rounded,filled", fillcolor="#fff7ed", color="#c2410c", fontname="Segoe UI"];
   edge  [color="#9a3412", penwidth=1.4];
 
-  PSU [label="Fuente 5V/3.3V"];
-  MCU [label="ESP32 / MCU"];
-  DHT [label="Sensor DHT22"];
-  REL [label="Módulo Relé 4CH"];
-  LOAD [label="Cargas externas"];
-  GND [label="GND común"];
+  PSU [label="Fuente Regulada 5V\\n(Alimentación General)"];
+  
+  subgraph cluster_decoupling {
+    label="Desacoplo de Ruido";
+    color="#475569";
+    style="dashed,rounded";
+    C1 [label="Capacitor C1 (100nF)\\n(Alta Frecuencia)", shape=circle, fillcolor="#f1f5f9", color="#475569"];
+    C2 [label="Capacitor C2 (10uF)\\n(Baja Frecuencia)", shape=circle, fillcolor="#f1f5f9", color="#475569"];
+  }
 
-  PSU -> MCU [label="VCC"];
-  PSU -> DHT [label="VCC"];
-  PSU -> REL [label="VCC"];
-  DHT -> MCU [label="DATA"];
-  MCU -> REL [label="GPIO control"];
-  REL -> LOAD [label="Conmutación"];
-  MCU -> GND;
-  DHT -> GND;
-  REL -> GND;
+  subgraph cluster_mcu {
+    label="Asignación de Pines (ESP32)";
+    color="#1e3a8a";
+    style="filled,rounded";
+    fillcolor="#eff6ff";
+    MCU [label="ESP32 MCU\\nPin 3V3, GND, GPIO34, GPIO23", fillcolor="#dbeafe", color="#1e3a8a"];
+  }
+
+  subgraph cluster_routing {
+    label="Ruteo de Señales & Diseño de Pistas";
+    color="#0891b2";
+    style="filled,rounded";
+    fillcolor="#ecfeff";
+    DHT [label="Sensor DHT22\\nPin DATA (GPIO34)", fillcolor="#cffafe", color="#0891b2"];
+    REL [label="Módulo Relé\\nPin IN1 (GPIO23)", fillcolor="#cffafe", color="#0891b2"];
+  }
+
+  PSU -> C1 [label="Pista VCC 5V\\n(Ancho 1.2mm)"];
+  PSU -> C2 [label="Pista VCC 5V\\n(Ancho 1.2mm)"];
+  C1 -> MCU [label="Pin 3V3"];
+  
+  DHT -> MCU [label="Ruteo Señal DHT\\nPista Señal (0.25mm)\\nPin GPIO34"];
+  MCU -> REL [label="Ruteo Señal Relé\\nPista Señal (0.25mm)\\nPin GPIO23"];
+  
+  GND [label="Plano de Masa GND\\n(Común & Reducción de Bucle)"];
+  MCU -> GND [label="Vía a GND"];
+  DHT -> GND [label="Vía a GND"];
+  REL -> GND [label="Vía a GND"];
+  C1 -> GND [label="Vía a GND"];
+  C2 -> GND [label="Vía a GND"];
 }
 """.strip()
 
@@ -319,6 +425,9 @@ def _build_html(
     diagrams: List[Path],
     block_diagram: Optional[Path] = None,
     circuit_diagram: Optional[Path] = None,
+    author: str = "Sergio Antonio Martinez Orozco",
+    institution: str = "UNAD",
+    date_str: str = "",
 ):
     output_html.parent.mkdir(parents=True, exist_ok=True)
 
@@ -382,6 +491,12 @@ def _build_html(
 <body>
   <div class='wrap'>
     <h1>{html.escape(project_title)}</h1>
+    <section class='card'>
+      <h2>Información del Proyecto</h2>
+      <p><strong>Autor:</strong> {html.escape(author)}</p>
+      <p><strong>Institución:</strong> {html.escape(institution)}</p>
+      <p><strong>Fecha de Generación:</strong> {html.escape(date_str)}</p>
+    </section>
     <section class='card'>
       <h2>Funcionamiento del producto</h2>
       <p>{html.escape(overview)}</p>
@@ -471,15 +586,18 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
             return f"❌ {msg} Detalle: {dep_err}"
 
         # Fase 1: Hardware
-        _phase_start(player, "Hardware", lines)
-        _phase_end(player, "Hardware", lines)
+        _phase_start(player, "Hardware", lines, speak, progress=20)
+        import time
+        time.sleep(0.5)
+        _phase_end(player, "Hardware", lines, speak, progress=30)
 
         # Fase 2: Software
-        _phase_start(player, "Software", lines)
-        _phase_end(player, "Software", lines)
+        _phase_start(player, "Software", lines, speak, progress=35)
+        time.sleep(0.5)
+        _phase_end(player, "Software", lines, speak, progress=45)
 
         # Fase 3: Diagramas
-        _phase_start(player, "Diagramas", lines)
+        _phase_start(player, "Diagramas", lines, speak, progress=50)
         diagram_dir.mkdir(parents=True, exist_ok=True)
         gv = _generate_graphviz(diagram_dir, project_title)
         gc = _generate_graphviz_circuit(diagram_dir, project_title)
@@ -492,39 +610,35 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
         web_exts = png_exts | {".svg"}
 
         all_files = sorted([p for p in diagram_dir.iterdir() if p.is_file()])
+        # Orden canónico de inserción en Word: bloques → circuito → flujo
         diagram_pngs = [
             expected["graphviz_png"],
+            expected["circuit_png"],
             expected["mermaid_png"],
         ]
         diagram_web = [
             expected["graphviz_png"],
             expected["graphviz_svg"],
-            gc.get("png") if gc.get("png") else diagram_dir / "diagrama_circuito_graphviz.png",
-            gc.get("svg") if gc.get("svg") else diagram_dir / "diagrama_circuito_graphviz.svg",
+            expected["circuit_png"],
+            expected["circuit_svg"],
             expected["mermaid_png"],
             expected["mermaid_svg"],
         ]
 
         if not diagram_pngs or not all(p.exists() for p in diagram_pngs):
             # Fallback adicional a rutas directas reportadas por generadores.
-            diagram_pngs = [p for p in [gv.get("png"), mm.get("png")] if p and p.exists()] or [p for p in all_files if p.suffix.lower() in png_exts]
+            diagram_pngs = [p for p in [gv.get("png"), gc.get("png"), mm.get("png")] if p and p.exists()] or [p for p in all_files if p.suffix.lower() in png_exts]
         if not diagram_web or not all(p.exists() for p in diagram_web):
-            diagram_web = [p for p in [gv.get("png"), gv.get("svg"), mm.get("png"), mm.get("svg")] if p and p.exists()] or [p for p in all_files if p.suffix.lower() in web_exts]
+            diagram_web = [p for p in [gv.get("png"), gv.get("svg"), gc.get("png"), gc.get("svg"), mm.get("png"), mm.get("svg")] if p and p.exists()] or [p for p in all_files if p.suffix.lower() in web_exts]
 
         generated_count = sum(1 for p in expected.values() if p.exists())
-        _log(player, f"ACT: Diagramas generados: {generated_count}/4")
+        _log(player, f"ACT: Diagramas generados: {generated_count}/6")
         manifest = write_manifest(diagram_dir, expected_bundle(diagram_dir), project_title)
         _log(player, f"ACT: Manifest de diagramas: {manifest}")
-        if hasattr(player, "update_activity"):
-            try:
-                player.update_activity(evento=f"Diagramas generados: {generated_count}/4")
-            except Exception:
-                pass
-
-        _phase_end(player, "Diagramas", lines)
+        _phase_end(player, "Diagramas", lines, speak, progress=65)
 
         # Fase 4: Word
-        _phase_start(player, "Word", lines)
+        _phase_start(player, "Word", lines, speak, progress=70)
         if not template_path.exists():
             raise FileNotFoundError(
                 f"No se encontró la plantilla: {template_path}. Verifica la ruta 'templade/templade.docx'."
@@ -553,7 +667,7 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
         _append_code_section(doc, "Software", source_code)
         _add_heading_safe(doc, "Diagramas", level=2)
 
-        # Secciones solicitadas explícitamente por el usuario
+        # 3.1 Diagrama de Bloques Funcionales
         _add_heading_safe(doc, "3.1. Diagrama de Bloques Funcionales", level=3)
         doc.add_paragraph("Figura 3.1: Arquitectura de bloques funcionales del sistema.")
         block_png = expected["graphviz_png"] if expected["graphviz_png"].exists() else gv.get("png")
@@ -565,9 +679,10 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
         else:
             doc.add_paragraph("No disponible: diagrama de bloques funcionales.")
 
+        # 3.2 Diagrama del Circuito Esquemático
         _add_heading_safe(doc, "3.2. Diagrama del Circuito Esquemático", level=3)
         doc.add_paragraph("Figura 3.2: Circuito esquemático detallado de la solución de ingeniería.")
-        circuit_png = gc.get("png") if gc.get("png") and Path(gc.get("png")).exists() else (diagram_dir / "diagrama_circuito_graphviz.png")
+        circuit_png = expected["circuit_png"] if expected["circuit_png"].exists() else gc.get("png")
         if circuit_png and Path(circuit_png).exists():
             try:
                 doc.add_picture(str(circuit_png), width=Inches(6.2))
@@ -576,23 +691,23 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
         else:
             doc.add_paragraph("No disponible: diagrama del circuito esquemático.")
 
-        inserted_word = 0
-        # Contabilizar inserciones explícitas de 3.1 y 3.2
-        if block_png and Path(block_png).exists():
-            inserted_word += 1
-        if circuit_png and Path(circuit_png).exists():
-            inserted_word += 1
-        for img in diagram_pngs:
+        # 3.3 Diagrama de Flujo del Software
+        _add_heading_safe(doc, "3.3. Diagrama de Flujo del Software", level=3)
+        doc.add_paragraph("Figura 3.3: Diagrama de flujo del ciclo de control y toma de decisiones.")
+        flujo_png = expected["mermaid_png"] if expected["mermaid_png"].exists() else mm.get("png")
+        if flujo_png and Path(flujo_png).exists():
             try:
-                doc.add_paragraph(f"Diagrama insertado: {img.name}")
-                doc.add_picture(str(img), width=Inches(6.2))
-                inserted_word += 1
+                doc.add_picture(str(flujo_png), width=Inches(4.0))
             except Exception as pic_err:
-                doc.add_paragraph(f"No se pudo insertar {img.name}: {pic_err}")
+                doc.add_paragraph(f"No se pudo insertar diagrama de flujo: {pic_err}")
+        else:
+            doc.add_paragraph("No disponible: diagrama de flujo del software.")
 
-        # Siempre documentar y enlazar también los SVG esperados en la sección Word.
+        inserted_word = sum(1 for p in [block_png, circuit_png, flujo_png] if p and Path(p).exists())
+
+        # Documentar los SVG generados en la sección Word.
         doc.add_paragraph("Diagramas SVG generados:")
-        for svg in [expected["graphviz_svg"], expected["mermaid_svg"]]:
+        for svg in [expected["graphviz_svg"], expected["circuit_svg"], expected["mermaid_svg"]]:
             if svg.exists():
                 doc.add_paragraph(f"- {svg}")
             else:
@@ -600,16 +715,11 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
 
         output_docx.parent.mkdir(parents=True, exist_ok=True)
         doc.save(str(output_docx))
-        _log(player, f"ACT: Diagramas insertados en Word: {inserted_word}/4")
-        if hasattr(player, "update_activity"):
-            try:
-                player.update_activity(evento=f"Diagramas en Word: {inserted_word}/4")
-            except Exception:
-                pass
-        _phase_end(player, "Word", lines)
+        _log(player, f"ACT: Diagramas insertados en Word: {inserted_word}/3")
+        _phase_end(player, "Word", lines, speak, progress=85)
 
         # Fase 5: Web
-        _phase_start(player, "Web", lines)
+        _phase_start(player, "Web", lines, speak, progress=90)
         _build_html(
             output_html=output_html,
             project_title=project_title,
@@ -619,15 +729,13 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
             diagrams=diagram_web,
             block_diagram=block_png if block_png and Path(block_png).exists() else None,
             circuit_diagram=circuit_png if circuit_png and Path(circuit_png).exists() else None,
+            author=author,
+            institution=institution,
+            date_str=today,
         )
         inserted_web = sum(1 for p in diagram_web if p.exists() and p.suffix.lower() in web_exts)
         _log(player, f"ACT: Diagramas insertados en Web: {inserted_web}/6")
-        if hasattr(player, "update_activity"):
-            try:
-                player.update_activity(evento=f"Diagramas en Web: {inserted_web}/6")
-            except Exception:
-                pass
-        _phase_end(player, "Web", lines)
+        _phase_end(player, "Web", lines, speak, progress=98)
 
         final_msg = (
             "✅ Todas las actividades están completadas. "
@@ -636,9 +744,13 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
         _log(player, final_msg)
         lines.append(final_msg)
 
-        if speak:
+        if player and hasattr(player, "update_activity"):
             try:
-                speak("Fases completadas. El reporte Word y la página web ya están listos.")
+                player.update_activity(
+                    estado="Completado",
+                    progreso=100,
+                    evento="Proyecto completado exitosamente"
+                )
             except Exception:
                 pass
 

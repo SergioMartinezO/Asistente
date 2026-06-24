@@ -70,11 +70,24 @@ def parse_requirements(requirements_path: Path) -> list[str]:
 
 
 def check_project_dependencies(requirements_path: Path) -> list[MissingDependency]:
+    cache_file = requirements_path.parent / ".dependency_ok"
+    try:
+        if cache_file.exists() and requirements_path.exists() and cache_file.stat().st_mtime > requirements_path.stat().st_mtime:
+            return []
+    except Exception:
+        pass
+
     missing: list[MissingDependency] = []
     for package in parse_requirements(requirements_path):
         import_name = _package_to_import_name(package)
         if not _is_import_available(import_name):
             missing.append(MissingDependency(package=package, import_name=import_name))
+    
+    if not missing:
+        try:
+            cache_file.touch()
+        except Exception:
+            pass
     return missing
 
 

@@ -3,6 +3,7 @@ import re
 import threading
 import traceback
 import os
+import time
 from pathlib import Path
 import sounddevice as sd
 import google.genai as genai
@@ -22,7 +23,7 @@ LIVE_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 CHANNELS = 1
 SEND_SAMPLE_RATE = 16_000
 RECEIVE_SAMPLE_RATE = 24_000
-CHUNK_SIZE = 4096
+CHUNK_SIZE = 1024
 PLAYBACK_BLOCKSIZE = 2048
 REPORT_BASE_DIR = Path(r"D:\IA\Asistente\Report")
 
@@ -52,6 +53,8 @@ class RexController:
         self._report_base = get_report_base()
         self._report_base.mkdir(parents=True, exist_ok=True)
         os.environ["REX_REPORT_DIR"] = str(self._report_base)
+        self._shutdown_requested = False
+        self._shutdown_lock = threading.Lock()
         
         # Servicio de Ingeniería asíncrono para cálculos complejos
         from concurrent.futures import ThreadPoolExecutor
@@ -69,6 +72,49 @@ class RexController:
         self._metrics_thread_running = True
         self._metrics_thread = threading.Thread(target=self._metrics_update_loop, daemon=True)
         self._metrics_thread.start()
+
+    def _request_shutdown(self, reason: str = "Solicitado por el usuario"):
+        """Cierre idempotente y seguro del asistente.
+
+        Evita reentradas, detiene recursos no-daemon y finaliza la UI.
+        """
+        with self._shutdown_lock:
+            if self._shutdown_requested:
+                return
+            self._shutdown_requested = True
+
+        self.ui.write_log(f"SYS: Iniciando cierre seguro ({reason}).")
+
+        def _shutdown_worker():
+            # 1) Detener actualización de métricas y monitoreo
+            self._metrics_thread_running = False
+            try:
+                self.model.stop_metrics_monitoring()
+            except Exception:
+                pass
+
+            # 2) Guardar sesión
+            try:
+                self.model.save_conversation_session()
+            except Exception:
+                pass
+
+            # 3) Cerrar pool de ingeniería (hilos no-daemon que pueden bloquear la salida)
+            try:
+                self.engineering_executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+
+            # 4) Dar un margen breve para limpieza
+            time.sleep(0.5)
+
+            # 5) Finalizar app de forma limpia
+            try:
+                self.ui._app.quit()
+            except Exception:
+                os._exit(0)
+
+        threading.Thread(target=_shutdown_worker, daemon=True).start()
 
     def _normalize_output_paths(self, name: str, args: dict) -> dict:
         return normalize_tool_outputs(name, dict(args or {}))
@@ -147,6 +193,9 @@ class RexController:
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
             return
+        if self._shutdown_requested:
+            self.ui.write_log("SYS: Ignorando comando: cierre en progreso.")
+            return
 
         # Confirmación explícita pendiente para búsquedas web
         pending = self._pending_web_search
@@ -198,7 +247,8 @@ class RexController:
             self.ui.set_state("LISTENING")
 
     def speak(self, text: str):
-        self._on_text_command(text)
+        if text:
+            self.ui.write_log(f"REX: {text}")
 
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
@@ -406,7 +456,7 @@ class RexController:
             elif name == "engineering_report":
                 from actions.engineering_report import engineering_report
                 r = await loop.run_in_executor(
-                    None,
+                    self.engineering_executor,
                     lambda: engineering_report(parameters=args, player=self.ui, speak=self.speak)
                 )
                 result = r or "Reporte de ingeniería generado."
@@ -428,18 +478,9 @@ class RexController:
                 result = r or "Hecho."
             elif name == "shutdown_rex":
                 self.ui.write_log("SYS: Apagado solicitado.")
-                self.model.save_conversation_session()
-                self.speak("Hasta luego. Sesión guardada.")
-                def _shutdown():
-                    import time
-                    time.sleep(2)
-                    self.model.stop_metrics_monitoring()
-                    self._metrics_thread_running = False
-                    try:
-                        self.ui._app.quit()
-                    except Exception:
-                        os._exit(0)
-                threading.Thread(target=_shutdown, daemon=True).start()
+                self.ui.write_log("Rex: Hasta luego. Sesión guardada.")
+                self._request_shutdown("Herramienta shutdown_rex")
+                result = "Cierre seguro iniciado."
             elif name in common_handlers:
                 r = await common_handlers[name]()
                 result = r or "Hecho."
