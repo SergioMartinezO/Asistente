@@ -4,6 +4,96 @@ import sys
 from pathlib import Path
 from google import genai
 
+
+def _safe_response_text(response) -> str:
+    """Extrae texto sin usar response.text (evita warning por non-data parts)."""
+    chunks: list[str] = []
+    try:
+        candidates = getattr(response, "candidates", None) or []
+        for cand in candidates:
+            content = getattr(cand, "content", None)
+            if content is None:
+                continue
+            parts = getattr(content, "parts", None) or []
+            for part in parts:
+                txt = getattr(part, "text", None)
+                if isinstance(txt, str) and txt.strip():
+                    chunks.append(txt)
+    except Exception:
+        pass
+    return "\n".join(chunks).strip()
+
+
+def _describe_response_parts(response) -> str:
+    """Describe tipos de partes presentes para diagnóstico rápido."""
+    kinds: list[str] = []
+    try:
+        candidates = getattr(response, "candidates", None) or []
+        for cand in candidates:
+            content = getattr(cand, "content", None)
+            if content is None:
+                continue
+            parts = getattr(content, "parts", None) or []
+            for part in parts:
+                if getattr(part, "text", None):
+                    kinds.append("text")
+                if getattr(part, "thought", None):
+                    kinds.append("thought")
+                if getattr(part, "inline_data", None):
+                    kinds.append("inline_data")
+                if getattr(part, "function_call", None):
+                    kinds.append("function_call")
+                if getattr(part, "function_response", None):
+                    kinds.append("function_response")
+    except Exception:
+        return "unknown"
+
+    if not kinds:
+        return "none"
+    return ",".join(sorted(set(kinds)))
+
+
+class _ResponseWrapper:
+    """Wrapper de respuesta para exponer .text sin activar warning de la librería."""
+
+    def __init__(self, raw_response):
+        self._raw = raw_response
+
+    @property
+    def text(self) -> str:
+        text = _safe_response_text(self._raw)
+        if not text and os.environ.get("REX_LOG_EMPTY_GENAI", "0") == "1":
+            model = getattr(self._raw, "model_version", None) or "unknown-model"
+            parts = _describe_response_parts(self._raw)
+            print(f"[REX] ⚠️ Respuesta Gemini sin texto extraíble (model={model}, parts={parts})")
+        return text
+
+    def __getattr__(self, item):
+        return getattr(self._raw, item)
+
+
+class _ModelsWrapper:
+    def __init__(self, raw_models):
+        self._raw_models = raw_models
+
+    def generate_content(self, *args, **kwargs):
+        raw = self._raw_models.generate_content(*args, **kwargs)
+        return _ResponseWrapper(raw)
+
+    def __getattr__(self, item):
+        return getattr(self._raw_models, item)
+
+
+class _ClientWrapper:
+    """Wrapper de cliente para normalizar respuestas de models.generate_content."""
+
+    def __init__(self, raw_client):
+        self._raw = raw_client
+        self.models = _ModelsWrapper(raw_client.models)
+
+    def __getattr__(self, item):
+        return getattr(self._raw, item)
+
 _base_dir_cache = None
 
 def get_base_dir() -> Path:
@@ -55,10 +145,11 @@ def get_gemini_client() -> genai.Client:
     if _client_cache is not None:
         return _client_cache
     api_key = get_api_key()
-    _client_cache = genai.Client(
+    raw_client = genai.Client(
         api_key=api_key or os.environ.get("GEMINI_API_KEY", ""),
         http_options={"api_version": "v1beta"}
     )
+    _client_cache = _ClientWrapper(raw_client)
     return _client_cache
 
 def reset_client():

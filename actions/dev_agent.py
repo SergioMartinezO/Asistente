@@ -3,6 +3,7 @@ import sys
 import json
 import re
 import time
+import os
 from pathlib import Path
 
 
@@ -14,7 +15,7 @@ def get_base_dir():
 
 BASE_DIR         = get_base_dir()
 API_CONFIG_PATH  = BASE_DIR / "config" / "api_keys.json"
-PROJECTS_DIR     = Path.home() / "Desktop" / "RexProjects"
+PROJECTS_DIR     = Path(os.environ.get("REX_REPORT_DIR", str(BASE_DIR / "Report"))) / "RexProjects"
 MAX_FIX_ATTEMPTS = 5
 MODEL_PLANNER    = "gemini-2.5-flash"
 MODEL_WRITER     = "gemini-2.5-flash"

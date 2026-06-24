@@ -3,6 +3,7 @@ import sys
 import json
 import re
 import time
+import os
 from pathlib import Path
 
 
@@ -14,6 +15,7 @@ def get_base_dir():
 BASE_DIR           = get_base_dir()
 API_CONFIG_PATH    = BASE_DIR / "config" / "api_keys.json"
 DESKTOP            = Path.home() / "Desktop"
+REPORT_DIR         = Path(os.environ.get("REX_REPORT_DIR", str(BASE_DIR / "Report")))
 MAX_BUILD_ATTEMPTS = 3
 GEMINI_MODEL       = "gemini-2.5-flash"
 
@@ -42,9 +44,14 @@ def _resolve_save_path(output_path: str, language: str) -> Path:
     }
     if output_path:
         p = Path(output_path)
-        return p if p.is_absolute() else DESKTOP / p
+        if p.is_absolute():
+            REPORT_DIR.mkdir(parents=True, exist_ok=True)
+            return REPORT_DIR / p.name
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        return REPORT_DIR / p
     ext = ext_map.get((language or "python").lower(), ".py")
-    return DESKTOP / f"rex_code{ext}"
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    return REPORT_DIR / f"rex_code{ext}"
 
 
 def _read_file(file_path: str) -> tuple[str, str]:
@@ -84,7 +91,8 @@ def _has_error(output: str) -> bool:
 def _take_screenshot() -> Path | None:
     try:
         import pyautogui
-        screenshot_path = Path.home() / "Desktop" / f"rex_debug_{int(time.time())}.png"
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        screenshot_path = REPORT_DIR / f"rex_debug_{int(time.time())}.png"
         screenshot = pyautogui.screenshot()
         screenshot.save(str(screenshot_path))
         print(f"[Code] 📸 Screenshot: {screenshot_path}")

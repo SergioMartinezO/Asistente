@@ -5,6 +5,7 @@ import math
 import os
 import platform
 import random
+import re
 import subprocess
 import sys
 import threading
@@ -21,6 +22,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QBrush, QColor, QDragEnterEvent, QDropEvent, QFont, QFontDatabase,
     QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
+    QDesktopServices,
     QRadialGradient, QShortcut,
     QTextImageFormat, QTextDocument, QTextCharFormat, QImage,
 )
@@ -594,29 +596,36 @@ class LogWidget(QTextEdit):
             "file": BASE_DIR / "assets" / "ui" / "icons" / "archivo.svg",
             "err": BASE_DIR / "assets" / "ui" / "icons" / "error.svg",
             "sys": BASE_DIR / "assets" / "ui" / "icons" / "sistema.svg",
+            "web": BASE_DIR / "assets" / "ui" / "icons" / "actividad.svg",
         }
         self._sig.connect(self._enqueue)
 
     def append_log(self, text: str):
         self._sig.emit(text)
 
-    def _classify_event(self, text: str) -> tuple[str, str]:
+    def _classify_event(self, text: str) -> tuple[str, str, str]:
         raw = (text or "").strip()
         tl = raw.lower()
 
         if tl.startswith("usuario:"):
-            return "you", "Pregunta del usuario"
+            detail = raw.split(":", 1)[1].strip() if ":" in raw else raw
+            return "you", "Usuario", detail or "Interacción del usuario"
         if tl.startswith("rex:"):
-            return "ai", "Respuesta del asistente"
+            detail = raw.split(":", 1)[1].strip() if ":" in raw else raw
+            return "ai", "Asistente", detail or "Respuesta del asistente"
         if tl.startswith("act:"):
             detail = raw[4:].strip() or "Evento de actividad"
-            return "act", detail
+            return "act", "Actividad", detail
+        if tl.startswith("web:"):
+            detail = raw[4:].strip() or "Resultado web"
+            return "web", "Resultado web", detail
         if tl.startswith("file:"):
-            return "file", "Evento de archivo"
+            detail = raw.split(":", 1)[1].strip() if ":" in raw else raw
+            return "file", "Archivo", detail or "Evento de archivo"
         if "err" in tl:
             short = raw[:90] + ("…" if len(raw) > 90 else "")
-            return "err", short
-        return "sys", raw or "Evento del sistema"
+            return "err", "Error", short
+        return "sys", "Sistema", raw or "Evento del sistema"
 
     def _icon_for_tag(self, tag: str) -> QPixmap:
         if tag in self._icon_cache:
@@ -641,6 +650,7 @@ class LogWidget(QTextEdit):
             "you": ("?", qcol(C.WHITE), qcol(C.PRI_GHO)),
             "ai": ("🔊", qcol(C.PRI), qcol(C.PRI_GHO)),
             "act": ("⚙", qcol(C.ACC2), qcol(C.PRI_GHO)),
+            "web": ("🌐", qcol(C.GREEN), qcol(C.PRI_GHO)),
             "file": ("📁", qcol(C.GREEN), qcol(C.PRI_GHO)),
             "err": ("!", qcol(C.RED), qcol(C.PRI_GHO)),
             "sys": ("i", qcol(C.TEXT_MED), qcol(C.PRI_GHO)),
@@ -663,11 +673,17 @@ class LogWidget(QTextEdit):
         return pm
 
     def _enqueue(self, text: str):
-        tag, label = self._classify_event(text)
+        tag, title, detail = self._classify_event(text)
         ts = datetime.now().strftime("%H:%M:%S")
 
         cur = self.textCursor()
         cur.movePosition(cur.MoveOperation.End)
+
+        if tag == "web":
+            self._insert_web_result_card(cur, ts, title, detail)
+            self.setTextCursor(cur)
+            self.ensureCursorVisible()
+            return
 
         # Tarjeta visual compacta: [hora] [icono] [evento]
         card_fmt = QTextCharFormat()
@@ -699,8 +715,8 @@ class LogWidget(QTextEdit):
         img_fmt.setHeight(14)
         cur.insertImage(img_fmt)
 
-        msg_fmt = QTextCharFormat()
-        msg_fmt.setForeground(QBrush({
+        title_fmt = QTextCharFormat()
+        title_fmt.setForeground(QBrush({
             "you": qcol(C.WHITE),
             "ai": qcol(C.PRI),
             "act": qcol(C.ACC2),
@@ -708,10 +724,203 @@ class LogWidget(QTextEdit):
             "err": qcol(C.RED),
             "sys": qcol(C.TEXT_MED),
         }.get(tag, qcol(C.TEXT))))
-        cur.insertText(f"  {label}\n", msg_fmt)
+
+        detail_fmt = QTextCharFormat()
+        detail_fmt.setForeground(QBrush(qcol(C.TEXT)))
+
+        cur.insertText(f"  {title}", title_fmt)
+        if detail:
+            cur.insertText(f": {detail}", detail_fmt)
+        cur.insertText("\n", detail_fmt)
 
         self.setTextCursor(cur)
         self.ensureCursorVisible()
+
+    def _insert_web_result_card(self, cur, ts: str, title: str, detail: str):
+        ts_fmt = QTextCharFormat()
+        ts_fmt.setForeground(QBrush(qcol(C.TEXT_DIM)))
+        cur.insertText(f"{ts}  ", ts_fmt)
+
+        icon_name = "rex_icon_web"
+        if icon_name not in self._icon_registered:
+            icon_image = self._icon_for_tag("web").toImage()
+            if icon_image.isNull():
+                icon_image = QImage(14, 14, QImage.Format.Format_ARGB32)
+                icon_image.fill(Qt.GlobalColor.transparent)
+            self.document().addResource(
+                QTextDocument.ResourceType.ImageResource,
+                QUrl(icon_name),
+                icon_image,
+            )
+            self._icon_registered.add(icon_name)
+
+        img_fmt = QTextImageFormat()
+        img_fmt.setName(icon_name)
+        img_fmt.setWidth(14)
+        img_fmt.setHeight(14)
+        cur.insertImage(img_fmt)
+
+        title_fmt = QTextCharFormat()
+        title_fmt.setForeground(QBrush(qcol(C.GREEN)))
+        title_fmt.setFontWeight(QFont.Weight.Bold)
+        cur.insertText(f"  {title}\n", title_fmt)
+
+        detail_fmt = QTextCharFormat()
+        detail_fmt.setForeground(QBrush(qcol(C.WHITE)))
+
+        parsed_entries = _parse_web_result_entries(detail or "Sin resultados.")
+        if parsed_entries:
+            entry_title_fmt = QTextCharFormat()
+            entry_title_fmt.setForeground(QBrush(qcol(C.ACC2)))
+            entry_title_fmt.setFontWeight(QFont.Weight.Bold)
+
+            snippet_fmt = QTextCharFormat()
+            snippet_fmt.setForeground(QBrush(qcol(C.WHITE)))
+
+            url_fmt = QTextCharFormat()
+            url_fmt.setForeground(QBrush(qcol(C.PRI)))
+            url_fmt.setFontUnderline(True)
+
+            for index, entry in enumerate(parsed_entries, start=1):
+                if entry.get("title"):
+                    cur.insertText(f"    {index}. {entry['title']}\n", entry_title_fmt)
+                if entry.get("snippet"):
+                    cur.insertText(f"       {entry['snippet']}\n", snippet_fmt)
+                if entry.get("url"):
+                    cur.insertText(f"       {entry['url']}\n", url_fmt)
+                cur.insertText("\n", detail_fmt)
+        else:
+            for line in (detail or "Sin resultados.").splitlines():
+                clean_line = line.strip()
+                if not clean_line:
+                    cur.insertText("\n", detail_fmt)
+                    continue
+                bullet = "• " if not clean_line.startswith(("•", "-", "1.", "2.", "3.", "4.", "5.")) else ""
+                cur.insertText(f"    {bullet}{clean_line}\n", detail_fmt)
+        cur.insertText("\n", detail_fmt)
+
+def _parse_web_result_entries(detail: str) -> list[dict[str, str]]:
+    lines = [line.rstrip() for line in (detail or "").splitlines()]
+    entries: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        match = re.match(r"^(\d+)\.\s+(.*)$", line)
+        if match:
+            if current and any(current.values()):
+                entries.append(current)
+            current = {"title": match.group(2).strip(), "snippet": "", "url": ""}
+            continue
+
+        if current is None:
+            continue
+
+        if re.match(r"^https?://", line, re.IGNORECASE):
+            current["url"] = line
+        elif current["snippet"]:
+            current["snippet"] = f"{current['snippet']} {line}".strip()
+        else:
+            current["snippet"] = line
+
+    if current and any(current.values()):
+        entries.append(current)
+
+    return entries
+
+
+class RecentWebResultsWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cards: list[QWidget] = []
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(4)
+
+        self._empty = QLabel("Sin resultados recientes")
+        self._empty.setFont(QFont("Courier New", 7))
+        self._empty.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        root.addWidget(self._empty)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setStyleSheet(f"background: {C.PANEL}; border: 1px solid {C.BORDER}; border-radius: 4px;")
+
+        self._container = QWidget()
+        self._layout = QVBoxLayout(self._container)
+        self._layout.setContentsMargins(6, 6, 6, 6)
+        self._layout.setSpacing(6)
+        self._layout.addStretch()
+        self._scroll.setWidget(self._container)
+        self._scroll.setFixedHeight(170)
+        root.addWidget(self._scroll)
+
+    def add_results(self, raw_text: str):
+        entries = _parse_web_result_entries(raw_text)
+        if not entries:
+            fallback = {"title": "Resultado", "snippet": (raw_text or "Sin resultados.").strip(), "url": ""}
+            entries = [fallback]
+
+        self._empty.hide()
+        for entry in reversed(entries[:3]):
+            card = self._build_card(entry)
+            self._layout.insertWidget(0, card)
+            self._cards.insert(0, card)
+
+        while len(self._cards) > 6:
+            old = self._cards.pop()
+            self._layout.removeWidget(old)
+            old.deleteLater()
+
+    def _build_card(self, entry: dict[str, str]) -> QWidget:
+        card = QFrame()
+        card.setStyleSheet(
+            f"background: {C.PANEL2}; border: 1px solid {C.BORDER_A}; border-radius: 4px;"
+        )
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(3)
+
+        title = QLabel(entry.get("title") or "Resultado web")
+        title.setWordWrap(True)
+        title.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {C.ACC2}; background: transparent; border: none;")
+        lay.addWidget(title)
+
+        snippet = QLabel(entry.get("snippet") or "")
+        snippet.setWordWrap(True)
+        snippet.setFont(QFont("Courier New", 7))
+        snippet.setStyleSheet(f"color: {C.WHITE}; background: transparent; border: none;")
+        lay.addWidget(snippet)
+
+        url = (entry.get("url") or "").strip()
+        if url:
+            url_lbl = QLabel(url)
+            url_lbl.setWordWrap(True)
+            url_lbl.setFont(QFont("Courier New", 7))
+            url_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent; border: none;")
+            lay.addWidget(url_lbl)
+
+            open_btn = QPushButton("Abrir enlace")
+            open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            open_btn.setFixedHeight(22)
+            open_btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+            open_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; color: {C.GREEN};
+                    border: 1px solid {C.GREEN_D}; border-radius: 3px;
+                }}
+                QPushButton:hover {{ background: #001a0d; border: 1px solid {C.GREEN}; }}
+            """)
+            open_btn.clicked.connect(lambda _, link=url: QDesktopServices.openUrl(QUrl(link)))
+            lay.addWidget(open_btn)
+
+        return card
 
 _FILE_ICONS = {
     "image":   ("🖼", "#00d4ff"), "video":   ("🎬", "#ff6b00"),
@@ -1078,6 +1287,9 @@ class MainWindow(QMainWindow):
         self.on_permission_check = None
         self._muted           = False
         self._current_file: str | None = None
+        self._diag_generated = 0
+        self._diag_word = 0
+        self._diag_web = 0
 
         central = QWidget()
         central.setStyleSheet(f"background: {C.BG};")
@@ -1364,10 +1576,40 @@ class MainWindow(QMainWindow):
             }}
         """)
 
+        self._diagram_status_lbl = QLabel("Integración de diagramas: 0%")
+        self._diagram_status_lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        self._diagram_status_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent; border: none;")
+
+        self._diagram_progress = QProgressBar()
+        self._diagram_progress.setMinimum(0)
+        self._diagram_progress.setMaximum(100)
+        self._diagram_progress.setValue(0)
+        self._diagram_progress.setFormat("%p%")
+        self._diagram_progress.setStyleSheet(f"""
+            QProgressBar {{
+                background: {C.BAR_BG};
+                border: 1px solid {C.BORDER};
+                border-radius: 3px;
+                text-align: center;
+                color: {C.WHITE};
+                height: 12px;
+            }}
+            QProgressBar::chunk {{
+                background: {C.RED};
+                border-radius: 2px;
+            }}
+        """)
+
         ac_lay.addWidget(self._activity_status_lbl)
         ac_lay.addWidget(self._activity_instruction_lbl)
         ac_lay.addWidget(self._activity_progress)
+        ac_lay.addWidget(self._diagram_status_lbl)
+        ac_lay.addWidget(self._diagram_progress)
         lay.addWidget(activity_card)
+
+        lay.addWidget(_sec("RESULTADOS WEB RECIENTES"))
+        self._recent_web_results = RecentWebResultsWidget()
+        lay.addWidget(self._recent_web_results)
 
         self._log = LogWidget()
         lay.addWidget(self._log, stretch=1)
@@ -1604,6 +1846,61 @@ class MainWindow(QMainWindow):
             self._activity_progress.setValue(max(0, min(100, int(progreso))))
         if evento:
             self._log.append_log(f"ACT: {evento}")
+            self._consume_diagram_event(evento)
+
+    def _consume_diagram_event(self, evento: str):
+        evt = str(evento or "")
+
+        m_gen = re.search(r"Diagramas generados:\s*(\d+)\s*/\s*4", evt, re.IGNORECASE)
+        if m_gen:
+            self._diag_generated = max(0, min(4, int(m_gen.group(1))))
+
+        m_word = re.search(r"Diagramas en Word:\s*(\d+)\s*/\s*(2|4)", evt, re.IGNORECASE)
+        if m_word:
+            max_word = int(m_word.group(2))
+            self._diag_word = max(0, min(max_word, int(m_word.group(1))))
+
+        m_web = re.search(r"Diagramas en Web:\s*(\d+)\s*/\s*(4|6)", evt, re.IGNORECASE)
+        if m_web:
+            max_web = int(m_web.group(2))
+            self._diag_web = max(0, min(max_web, int(m_web.group(1))))
+
+        # Peso de integración: generación 40%, Word 30%, Web 30%
+        score = (
+            (self._diag_generated / 4.0) * 0.40
+            + (self._diag_word / 4.0) * 0.30
+            + (self._diag_web / 6.0) * 0.30
+        )
+        pct = int(round(score * 100))
+        self._diagram_progress.setValue(max(0, min(100, pct)))
+        self._diagram_status_lbl.setText(
+            f"Integración de diagramas: {pct}%  (G:{self._diag_generated}/4  W:{self._diag_word}/4  Web:{self._diag_web}/6)"
+        )
+
+        if pct >= 100:
+            chunk_color = C.GREEN
+        elif pct >= 50:
+            chunk_color = C.ACC2
+        else:
+            chunk_color = C.RED
+
+        self._diagram_progress.setStyleSheet(f"""
+            QProgressBar {{
+                background: {C.BAR_BG};
+                border: 1px solid {C.BORDER};
+                border-radius: 3px;
+                text-align: center;
+                color: {C.WHITE};
+                height: 12px;
+            }}
+            QProgressBar::chunk {{
+                background: {chunk_color};
+                border-radius: 2px;
+            }}
+        """)
+
+    def add_recent_web_results(self, raw_text: str):
+        self._recent_web_results.add_results(raw_text)
 
 
 class _RootShim:
@@ -1674,6 +1971,9 @@ class RexUI:
             "progreso": progreso,
             "evento": evento,
         })
+
+    def add_recent_web_results(self, raw_text: str):
+        self._win.add_recent_web_results(raw_text)
 
     def wait_for_api_key(self):
         while not self._win._ready:

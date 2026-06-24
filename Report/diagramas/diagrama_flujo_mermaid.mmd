@@ -1,0 +1,8 @@
+flowchart TD
+    U[Usuario / Entorno] --> S[Sensores]
+    S --> M[Microcontrolador]
+    M --> D{Decisión de control}
+    D -- Activar --> A[Actuador Principal]
+    D -- Esperar --> E[Estado Seguro]
+    A --> F[Realimentación]
+    F --> M

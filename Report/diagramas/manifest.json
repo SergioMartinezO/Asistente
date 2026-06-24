@@ -1,0 +1,26 @@
+{
+  "project_title": "Sistema de Control y Amplificación Inteligente",
+  "generated_at": "2026-06-23T19:40:56",
+  "files": {
+    "graphviz_png": {
+      "path": "D:\\IA\\Asistente\\Report\\diagramas\\diagrama_bloques_graphviz.png",
+      "exists": true,
+      "size_bytes": 15867
+    },
+    "graphviz_svg": {
+      "path": "D:\\IA\\Asistente\\Report\\diagramas\\diagrama_bloques_graphviz.svg",
+      "exists": true,
+      "size_bytes": 3838
+    },
+    "mermaid_png": {
+      "path": "D:\\IA\\Asistente\\Report\\diagramas\\diagrama_flujo_mermaid.png",
+      "exists": true,
+      "size_bytes": 30386
+    },
+    "mermaid_svg": {
+      "path": "D:\\IA\\Asistente\\Report\\diagramas\\diagrama_flujo_mermaid.svg",
+      "exists": true,
+      "size_bytes": 20040
+    }
+  }
+}

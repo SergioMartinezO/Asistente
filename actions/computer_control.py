@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 import random
+import os
 from pathlib import Path
 
 try:
@@ -32,6 +33,7 @@ def _base_dir() -> Path:
 _BASE         = _base_dir()
 _CONFIG_PATH  = _BASE / "config" / "api_keys.json"
 _MEMORY_PATH  = _BASE / "memory" / "long_term.json"
+_REPORT_DIR   = Path(os.environ.get("REX_REPORT_DIR", str(_BASE / "Report")))
 
 def _load_config() -> dict:
     try:
@@ -48,10 +50,12 @@ def _get_api_key() -> str:
 
 _SAFE_SCREENSHOT_ROOTS = (
     Path.home(),
+    _REPORT_DIR,
 )
 
 def _safe_screenshot_path(requested: str | None) -> Path:
-    fallback = Path.home() / "Desktop" / "rex_screenshot.png"
+    _REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    fallback = _REPORT_DIR / "rex_screenshot.png"
     if not requested:
         return fallback
     try:

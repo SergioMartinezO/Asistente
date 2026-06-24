@@ -449,6 +449,35 @@ TOOL_DECLARATIONS = [
     }
 },
 {
+    "name": "engineering_report",
+    "description": (
+        "Genera un paquete completo de diseño de producto electrónico en fases: "
+        "hardware, software, diagramas (Graphviz/Mermaid), documento Word desde plantilla y página web HTML. "
+        "Usa por defecto la plantilla D:\\IA\\Asistente\\templade\\templade.docx y genera "
+        "D:\\IA\\Asistente\\Report\\Reporte_Proyecto.docx + D:\\IA\\Asistente\\Report\\index.html."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "project_title": {"type": "STRING", "description": "Título del proyecto."},
+            "author": {"type": "STRING", "description": "Autor del documento. Default: Sergio Antonio Martinez Orozco"},
+            "institution": {"type": "STRING", "description": "Institución. Default: UNAD"},
+            "overview": {"type": "STRING", "description": "Resumen funcional del producto."},
+            "hardware_items": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"},
+                "description": "Lista de componentes con especificaciones/justificación técnica."
+            },
+            "source_code": {"type": "STRING", "description": "Código fuente (Arduino/Python/C) comentado en español."},
+            "template_path": {"type": "STRING", "description": "Ruta de plantilla .docx. Default: D:\\IA\\Asistente\\templade\\templade.docx"},
+            "output_docx": {"type": "STRING", "description": "Ruta de salida del Word final."},
+            "output_html": {"type": "STRING", "description": "Ruta de salida de index.html."},
+            "diagram_dir": {"type": "STRING", "description": "Carpeta para diagramas PNG/SVG."}
+        },
+        "required": ["project_title"]
+    }
+},
+{
     "name": "datasheet_finder",
     "description": (
         "Busca datasheets y especificaciones t├®cnicas de componentes electr├│nicos. "

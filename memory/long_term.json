@@ -25,7 +25,12 @@
       "updated": "2026-06-10"
     }
   },
-  "relationships": {},
+  "relationships": {
+    "uncle_name": {
+      "value": "Ciro",
+      "updated": "2026-06-23"
+    }
+  },
   "wishes": {},
   "notes": {}
 }

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang='es'>
+<head>
+  <meta charset='utf-8' />
+  <meta name='viewport' content='width=device-width,initial-scale=1' />
+  <title>Sistema de Control y Amplificación Inteligente</title>
+  <style>
+    body { font-family: Segoe UI, Arial, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+    .wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+    .card { background: #111827; border: 1px solid #334155; border-radius: 12px; padding: 14px; margin: 12px 0; }
+    h1, h2 { color: #93c5fd; }
+    pre { background: #020617; border: 1px solid #334155; border-radius: 8px; padding: 10px; overflow-x: auto; }
+    img { width: 100%; max-width: 900px; height: auto; border-radius: 10px; border: 1px solid #334155; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    @media (min-width: 980px) { .grid { grid-template-columns: 1fr 1fr; } }
+  </style>
+</head>
+<body>
+  <div class='wrap'>
+    <h1>Sistema de Control y Amplificación Inteligente</h1>
+    <section class='card'>
+      <h2>Funcionamiento del producto</h2>
+      <p>Diseño de un sistema electrónico que permite el control de encendido y la amplificación de señales, integrando hardware, software y documentación completa.</p>
+    </section>
+    <section class='card'>
+      <h2>Hardware</h2>
+      <ul><li>Microcontrolador Arduino (Control de encendido)</li>
+<li>Amplificador Operacional LM741 (Etapa de amplificación)</li>
+<li>Resistencias y Condensadores (Ajuste de ganancia y filtrado)</li>
+<li>Fuente de alimentación (Regulada)</li></ul>
+    </section>
+    <section class='card'>
+      <h2>Software</h2>
+      <pre><code>// Código de ejemplo para control de encendido con Arduino
+const int RELAY_PIN = 7; // Pin para controlar el encendido (ej. mediante un relé)
+void setup() {
+  pinMode(RELAY_PIN, OUTPUT);
+  // Inicialización para control de amplificación si es necesario
+}
+void loop() {
+  // Lógica de encendido/apagado
+  digitalWrite(RELAY_PIN, HIGH); // Encender
+  delay(5000);
+  digitalWrite(RELAY_PIN, LOW); // Apagar
+  delay(5000);
+}</code></pre>
+    </section>
+    <section class='card'>
+      <h2>Diagramas</h2>
+            <h3>3.1. Diagrama de Bloques Funcionales</h3>
+            <figure class='card'><img src='diagramas/diagrama_bloques_graphviz.png' alt='Diagrama de bloques' /><figcaption>Figura 3.1: Arquitectura de bloques funcionales del sistema.</figcaption></figure>
+            <h3>3.2. Diagrama del Circuito Esquemático</h3>
+            <figure class='card'><img src='diagramas/diagrama_circuito_graphviz.png' alt='Diagrama de circuito' /><figcaption>Figura 3.2: Circuito esquemático detallado de la solución de ingeniería.</figcaption></figure>
+      <div class='grid'><figure class='card'><img src='diagramas/diagrama_bloques_graphviz.png' alt='diagrama_bloques_graphviz.png' /><figcaption>diagrama_bloques_graphviz.png</figcaption></figure><figure class='card'><img src='diagramas/diagrama_bloques_graphviz.svg' alt='diagrama_bloques_graphviz.svg' /><figcaption>diagrama_bloques_graphviz.svg</figcaption></figure><figure class='card'><img src='diagramas/diagrama_circuito_graphviz.png' alt='diagrama_circuito_graphviz.png' /><figcaption>diagrama_circuito_graphviz.png</figcaption></figure><figure class='card'><img src='diagramas/diagrama_circuito_graphviz.svg' alt='diagrama_circuito_graphviz.svg' /><figcaption>diagrama_circuito_graphviz.svg</figcaption></figure><figure class='card'><img src='diagramas/diagrama_flujo_mermaid.png' alt='diagrama_flujo_mermaid.png' /><figcaption>diagrama_flujo_mermaid.png</figcaption></figure><figure class='card'><img src='diagramas/diagrama_flujo_mermaid.svg' alt='diagrama_flujo_mermaid.svg' /><figcaption>diagrama_flujo_mermaid.svg</figcaption></figure></div>
+    </section>
+  </div>
+</body>
+</html>

@@ -74,7 +74,13 @@ def _file_size_str(path: Path) -> str:
 def _output_path(src: Path, suffix: str, new_ext: str = None) -> Path:
     ext  = new_ext or src.suffix
     name = f"{src.stem}_{suffix}{ext}"
-    return src.parent / name
+    report_base = os.environ.get("REX_REPORT_DIR", "").strip()
+    if report_base:
+        out_dir = Path(report_base)
+    else:
+        out_dir = src.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir / name
 
 def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
     try:
@@ -728,7 +734,9 @@ def _process_archive(path: Path, action: str, params: dict, speak=None) -> str:
             return f"List failed: {e}"
 
     if action == "extract":
-        dest = Path(params.get("destination", str(path.parent / path.stem)))
+        report_base = os.environ.get("REX_REPORT_DIR", "").strip()
+        default_dest = Path(report_base) / "extract" if report_base else (path.parent / path.stem)
+        dest = Path(params.get("destination", str(default_dest)))
         dest.mkdir(parents=True, exist_ok=True)
         try:
             shutil.unpack_archive(path, dest)

@@ -2,6 +2,8 @@ import asyncio
 import re
 import threading
 import traceback
+import os
+from pathlib import Path
 import sounddevice as sd
 import google.genai as genai
 from google.genai import types
@@ -9,6 +11,7 @@ from google.genai import types
 from ui import RexUI
 from model import RexModel
 from core.config import get_gemini_client
+from core.output_policy import get_report_base, normalize_tool_outputs
 
 # Importar las declaraciones de herramientas (reutilizadas del main original o importadas)
 # Para evitar duplicar el bloque gigante de TOOL_DECLARATIONS, las importaremos o las volveremos a declarar.
@@ -20,6 +23,8 @@ CHANNELS = 1
 SEND_SAMPLE_RATE = 16_000
 RECEIVE_SAMPLE_RATE = 24_000
 CHUNK_SIZE = 4096
+PLAYBACK_BLOCKSIZE = 2048
+REPORT_BASE_DIR = Path(r"D:\IA\Asistente\Report")
 
 _CTRL_RE = re.compile(r"<ctrl\d+>", re.IGNORECASE)
 
@@ -44,6 +49,9 @@ class RexController:
         self._current_progress = 0
         self._tool_counter = 0
         self._active_instruction = ""
+        self._report_base = get_report_base()
+        self._report_base.mkdir(parents=True, exist_ok=True)
+        os.environ["REX_REPORT_DIR"] = str(self._report_base)
         
         # Servicio de Ingeniería asíncrono para cálculos complejos
         from concurrent.futures import ThreadPoolExecutor
@@ -61,6 +69,9 @@ class RexController:
         self._metrics_thread_running = True
         self._metrics_thread = threading.Thread(target=self._metrics_update_loop, daemon=True)
         self._metrics_thread.start()
+
+    def _normalize_output_paths(self, name: str, args: dict) -> dict:
+        return normalize_tool_outputs(name, dict(args or {}))
 
     def _begin_task(self, instruction: str):
         self._active_instruction = instruction or ""
@@ -106,9 +117,14 @@ class RexController:
                 args = dict(request.get("args") or {})
                 self._advance_progress(60, estado="En proceso", evento="Ejecutando búsqueda web confirmada")
                 result = web_search_action(parameters=args, player=self.ui) or "Sin resultados."
-                self.ui.write_log("Rex: Búsqueda web completada. Aquí tienes sugerencias/resultados:")
-                for line in str(result).splitlines():
-                    self.ui.write_log(f"Rex: {line}")
+                result_text = str(result).strip() or "Sin resultados."
+                self.ui.write_log("ACT: Búsqueda web finalizada")
+                self.ui.write_log("Rex: Búsqueda web completada. Estos son los resultados encontrados.")
+                for block in [part.strip() for part in result_text.split("\n\n") if part.strip()]:
+                    self.ui.write_log(f"WEB: {block}")
+                    self.ui.add_recent_web_results(block)
+                if not self.ui.muted:
+                    self.speak("La búsqueda web ha finalizado. Ya mostré los resultados en pantalla.")
                 self._complete_task("Búsqueda web finalizada")
             except Exception as e:
                 self.speak_error("web_search", e)
@@ -207,6 +223,37 @@ class RexController:
                 self.speak_error('permission_check', e)
         threading.Thread(target=_run, daemon=True).start()
 
+    def _iter_nested_exceptions(self, exc: BaseException):
+        """Itera recursivamente por excepciones dentro de ExceptionGroup."""
+        if isinstance(exc, BaseExceptionGroup):
+            for sub in exc.exceptions:
+                yield from self._iter_nested_exceptions(sub)
+            return
+        yield exc
+
+    def _is_recoverable_live_error(self, exc: BaseException) -> bool:
+        """Detecta cierres de sesión Live esperables (p.ej. code 1008 / policy)."""
+        for sub in self._iter_nested_exceptions(exc):
+            text = str(sub).lower()
+            code = getattr(sub, "code", None)
+            status_code = getattr(sub, "status_code", None)
+
+            if code == 1008 or status_code == 1008:
+                return True
+
+            if "1008" in text and (
+                "policy violation" in text
+                or "operation is not implemented" in text
+                or "not supported" in text
+                or "not enabled" in text
+            ):
+                return True
+
+            if "connectionclosed" in sub.__class__.__name__.lower() and "1008" in text:
+                return True
+
+        return False
+
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
 
@@ -235,7 +282,6 @@ class RexController:
             input_audio_transcription={},
             system_instruction="\n".join(parts),
             tools=[{"function_declarations": TOOL_DECLARATIONS}],
-            session_resumption=types.SessionResumptionConfig(),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -247,7 +293,7 @@ class RexController:
 
     async def _execute_tool(self, fc) -> types.FunctionResponse:
         name = fc.name
-        args = dict(fc.args or {})
+        args = self._normalize_output_paths(name, dict(fc.args or {}))
 
         print(f"[REX] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
@@ -272,55 +318,50 @@ class RexController:
         loop = asyncio.get_event_loop()
         result = "Hecho."
 
-        # Importar dinámicamente las herramientas correspondientes
-        from actions.file_processor import file_processor
-        from actions.flight_finder import flight_finder
-        from actions.electronics import electronics
-        from actions.dev_tools import dev_tools
-        from actions.mechatronics import mechatronics
-        from actions.open_app import open_app
-        from actions.weather_report import weather_action
-        from actions.send_message import send_message
-        from actions.reminder import reminder
-        from actions.computer_settings import computer_settings
-        from actions.screen_processor import screen_process
-        from actions.youtube_video import youtube_video
-        from actions.desktop import desktop_control
-        from actions.browser_control import browser_control
-        from actions.file_controller import file_controller
-        from actions.code_helper import code_helper
-        from actions.dev_agent import dev_agent
-        from actions.web_search import web_search as web_search_action
-        from actions.computer_control import computer_control
-        from actions.game_updater import game_updater
-        from actions.datasheet_finder import datasheet_finder
-        from actions.materials_science import materials_science
-        from actions.proteus_automation import proteus_automation
-        from actions.ltspice_automation import ltspice_automation
+        def _tool_unavailable(tool: str, err: Exception) -> str:
+            return f"La herramienta '{tool}' no está disponible en este entorno: {err}"
+
+        def _run_sync(module_name: str, attr: str, *call_args, **call_kwargs):
+            try:
+                mod = __import__(module_name, fromlist=[attr])
+                fn = getattr(mod, attr)
+            except Exception as imp_err:
+                return _tool_unavailable(module_name.split(".")[-1], imp_err)
+            try:
+                return fn(*call_args, **call_kwargs)
+            except Exception as run_err:
+                raise run_err
 
         try:
-            if name == "open_app":
-                r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
-                result = r or f"Aplicación abierta: {args.get('app_name')}."
-            elif name == "weather_report":
-                r = await loop.run_in_executor(None, lambda: weather_action(parameters=args, player=self.ui))
-                result = r or "Reporte del clima entregado."
-            elif name == "browser_control":
-                r = await loop.run_in_executor(None, lambda: browser_control(parameters=args, player=self.ui))
-                result = r or "Hecho."
-            elif name == "file_controller":
-                r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))
-                result = r or "Hecho."
-            elif name == "send_message":
-                r = await loop.run_in_executor(None, lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None))
-                result = r or f"Mensaje enviado a {args.get('receiver')}."
-            elif name == "reminder":
-                r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
-                result = r or "Recordatorio configurado."
-            elif name == "youtube_video":
-                r = await loop.run_in_executor(None, lambda: youtube_video(parameters=args, response=None, player=self.ui))
-                result = r or "Hecho."
-            elif name == "screen_process":
+            common_handlers = {
+                "open_app": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.open_app", "open_app", parameters=args, response=None, player=self.ui)),
+                "weather_report": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.weather_report", "weather_action", parameters=args, player=self.ui)),
+                "browser_control": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.browser_control", "browser_control", parameters=args, player=self.ui)),
+                "file_controller": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.file_controller", "file_controller", parameters=args, player=self.ui)),
+                "send_message": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.send_message", "send_message", parameters=args, response=None, player=self.ui, session_memory=None)),
+                "reminder": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.reminder", "reminder", parameters=args, response=None, player=self.ui)),
+                "youtube_video": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.youtube_video", "youtube_video", parameters=args, response=None, player=self.ui)),
+                "computer_settings": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.computer_settings", "computer_settings", parameters=args, response=None, player=self.ui)),
+                "desktop_control": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.desktop", "desktop_control", parameters=args, player=self.ui)),
+                "code_helper": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.code_helper", "code_helper", parameters=args, player=self.ui, speak=self.speak)),
+                "dev_agent": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.dev_agent", "dev_agent", parameters=args, player=self.ui, speak=self.speak)),
+                "computer_control": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.computer_control", "computer_control", parameters=args, player=self.ui)),
+                "game_updater": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.game_updater", "game_updater", parameters=args, player=self.ui, speak=self.speak)),
+                "dev_tools": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.dev_tools", "dev_tools", parameters=args, player=self.ui, speak=self.speak)),
+                "mechatronics": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.mechatronics", "mechatronics", parameters=args, player=self.ui, speak=self.speak)),
+                "datasheet_finder": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.datasheet_finder", "datasheet_finder", parameters=args, player=self.ui, speak=self.speak)),
+                "materials_science": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.materials_science", "materials_science", parameters=args, player=self.ui, speak=self.speak)),
+                "proteus_automation": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.proteus_automation", "proteus_automation", parameters=args, player=self.ui, speak=self.speak)),
+                "ltspice_automation": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.ltspice_automation", "ltspice_automation", parameters=args, player=self.ui, speak=self.speak)),
+                "flight_finder": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.flight_finder", "flight_finder", parameters=args, player=self.ui)),
+            }
+
+            if name == "screen_process":
+                try:
+                    from actions.screen_processor import screen_process
+                except Exception as imp_err:
+                    result = _tool_unavailable(name, imp_err)
+                    raise RuntimeError(result)
                 threading.Thread(
                     target=screen_process,
                     kwargs={"parameters": args, "response": None,
@@ -328,18 +369,6 @@ class RexController:
                     daemon=True
                 ).start()
                 result = "Módulo de visión activado. Mantén silencio: el módulo de visión hablará directamente."
-            elif name == "computer_settings":
-                r = await loop.run_in_executor(None, lambda: computer_settings(parameters=args, response=None, player=self.ui))
-                result = r or "Hecho."
-            elif name == "desktop_control":
-                r = await loop.run_in_executor(None, lambda: desktop_control(parameters=args, player=self.ui))
-                result = r or "Hecho."
-            elif name == "code_helper":
-                r = await loop.run_in_executor(None, lambda: code_helper(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Hecho."
-            elif name == "dev_agent":
-                r = await loop.run_in_executor(None, lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Hecho."
             elif name == "agent_task":
                 from agent.task_queue import get_queue, TaskPriority
                 priority_map = {"low": TaskPriority.LOW, "normal": TaskPriority.NORMAL, "high": TaskPriority.HIGH}
@@ -366,12 +395,6 @@ class RexController:
                     lambda: file_processor(parameters=args, player=self.ui, speak=self.speak)
                 )
                 result = r or "Hecho."
-            elif name == "computer_control":
-                r = await loop.run_in_executor(None, lambda: computer_control(parameters=args, player=self.ui))
-                result = r or "Hecho."
-            elif name == "game_updater":
-                r = await loop.run_in_executor(None, lambda: game_updater(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Hecho."
             elif name == "electronics":
                 from actions.electronics import ElectronicsAction
                 action_instance = ElectronicsAction()
@@ -380,24 +403,13 @@ class RexController:
                     lambda: asyncio.run(action_instance.execute(parameters=args, player=self.ui, speak_callback=self.speak))
                 )
                 result = r or "Hecho."
-            elif name == "dev_tools":
-                r = await loop.run_in_executor(None, lambda: dev_tools(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Hecho."
-            elif name == "mechatronics":
-                r = await loop.run_in_executor(None, lambda: mechatronics(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Hecho."
-            elif name == "datasheet_finder":
-                r = await loop.run_in_executor(None, lambda: datasheet_finder(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Hecho."
-            elif name == "materials_science":
-                r = await loop.run_in_executor(None, lambda: materials_science(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Hecho."
-            elif name == "proteus_automation":
-                r = await loop.run_in_executor(None, lambda: proteus_automation(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Hecho."
-            elif name == "ltspice_automation":
-                r = await loop.run_in_executor(None, lambda: ltspice_automation(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Hecho."
+            elif name == "engineering_report":
+                from actions.engineering_report import engineering_report
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: engineering_report(parameters=args, player=self.ui, speak=self.speak)
+                )
+                result = r or "Reporte de ingeniería generado."
             elif name == "matlab_link":
                 from actions.matlab_link import MatlabLinkAction
                 action_instance = MatlabLinkAction()
@@ -414,20 +426,23 @@ class RexController:
                     lambda: asyncio.run(action_instance.execute(parameters=args, player=self.ui, speak_callback=self.speak))
                 )
                 result = r or "Hecho."
-            elif name == "flight_finder":
-                r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
-                result = r or "Hecho."
             elif name == "shutdown_rex":
                 self.ui.write_log("SYS: Apagado solicitado.")
                 self.model.save_conversation_session()
                 self.speak("Hasta luego. Sesión guardada.")
                 def _shutdown():
-                    import time, os
+                    import time
                     time.sleep(2)
                     self.model.stop_metrics_monitoring()
                     self._metrics_thread_running = False
-                    os._exit(0)
+                    try:
+                        self.ui._app.quit()
+                    except Exception:
+                        os._exit(0)
                 threading.Thread(target=_shutdown, daemon=True).start()
+            elif name in common_handlers:
+                r = await common_handlers[name]()
+                result = r or "Hecho."
             else:
                 result = f"Herramienta desconocida: {name}"
         except Exception as e:
@@ -544,18 +559,23 @@ class RexController:
                             function_responses=fn_responses
                         )
         except Exception as e:
-            print(f"[REX] ❌ Recv: {e}")
-            traceback.print_exc()
+            if self._is_recoverable_live_error(e):
+                print(f"[REX] ⚠️ Recv recoverable: {e}")
+            else:
+                print(f"[REX] ❌ Recv: {e}")
+                traceback.print_exc()
             raise
 
     async def _play_audio(self):
         print("[REX] 🔊 Play started")
+        self.ui.write_log("ACT: Audio estable activado (PCM16 alineado, baja latencia)")
 
         stream = sd.RawOutputStream(
             samplerate=RECEIVE_SAMPLE_RATE,
             channels=CHANNELS,
             dtype="int16",
-            blocksize=CHUNK_SIZE,
+            blocksize=PLAYBACK_BLOCKSIZE,
+            latency="low",
         )
         stream.start()
 
@@ -576,6 +596,15 @@ class RexController:
                         self._turn_done_event.clear()
                     continue
                 self.set_speaking(True)
+                # Asegura alineación PCM16 por frame para evitar distorsión.
+                frame_bytes = 2 * CHANNELS  # int16 * channels
+                if not isinstance(chunk, (bytes, bytearray)):
+                    chunk = bytes(chunk)
+                if len(chunk) < frame_bytes:
+                    continue
+                rem = len(chunk) % frame_bytes
+                if rem:
+                    chunk = chunk[:len(chunk) - rem]
                 await asyncio.to_thread(stream.write, chunk)
         except Exception as e:
             print(f"[REX] ❌ Play: {e}")
@@ -618,11 +647,16 @@ class RexController:
                     tg.create_task(self._play_audio())
 
             except Exception as e:
+                recoverable = self._is_recoverable_live_error(e)
                 print(f"[REX] ⚠️ {e}")
-                traceback.print_exc()
+                if not recoverable:
+                    traceback.print_exc()
                 self.set_speaking(False)
                 self.ui.set_state("THINKING")
-                self.ui.write_log(f"SYS: Error de conexión — {str(e)[:120]}")
+                if recoverable:
+                    self.ui.write_log("SYS: Sesión Live reiniciada por compatibilidad del servidor (reconectando).")
+                else:
+                    self.ui.write_log(f"SYS: Error de conexión — {str(e)[:120]}")
                 self.ui.update_activity(estado="Error", progreso=0, evento="Error de conexión")
                 retry = getattr(self, '_retry_count', 0)
                 wait = min(3 * (2 ** retry), 60)

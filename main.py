@@ -1,15 +1,26 @@
-
 import asyncio
 import re
 import threading
 import json
 import sys
+import os
 import traceback
 from pathlib import Path
 import numpy as np
+import shutil
+import atexit
+
+# Evita que Python escriba archivos .pyc o carpetas __pycache__ durante esta ejecución
+sys.dont_write_bytecode = True
 # import sounddevice as sd # Removed, as it's handled in controller.py and might not be needed directly here
 import google.genai as genai
 from google.genai import types
+from core.dependency_check import check_project_dependencies, build_install_command
+
+if sys.platform.startswith("win"):
+    # Evita que Qt intente elevar el contexto DPI cuando otro componente ya lo fijó.
+    os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
+    os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "0")
 
 from ui import RexUI
 from memory.memory_manager import load_memory, update_memory, format_memory_for_prompt
@@ -122,7 +133,7 @@ except (ImportError, KeyError) as e:
     ltspice_automation = None
     HAS_LTSPICE_AUTOMATION = False
 
-def get_base_dir():
+def get_base_dir() -> Path:
     # In Colab, __file__ might not be defined. Use Path.cwd() which should point to /content/Asistente
     # after the initial `!cd Asistente` command.
     return Path.cwd()
@@ -142,6 +153,25 @@ CHUNK_SIZE = 4096
 
 # Expresión regular para limpiar transcripciones
 _CTRL_RE = re.compile(r"<ctrl\d+>", re.IGNORECASE)
+
+
+def limpiar_cache_al_salir():
+    """Busca y elimina recursivamente directorios __pycache__ al finalizar el programa."""
+    try:
+        for raiz, directorios, _ in os.walk(str(BASE_DIR)):
+            for directorio in directorios:
+                if directorio == "__pycache__":
+                    ruta_completa = os.path.join(raiz, directorio)
+                    try:
+                        shutil.rmtree(ruta_completa)
+                    except Exception:
+                        pass # Silenciar excepciones de archivos bloqueados temporalmente
+    except Exception:
+        pass
+
+# Registro de la función de desecho en el ciclo de vida del proceso
+atexit.register(limpiar_cache_al_salir)
+
 
 def _clean_transcript(text: str) -> str:
     text = _CTRL_RE.sub("", text)
@@ -196,6 +226,53 @@ def main():
 
     # 2. Crear Modelo (RexModel)
     model = RexModel()
+
+    # 2.1 Autochequeo de dependencias del proyecto (aviso en UI, sin abortar inicio)
+    missing = check_project_dependencies(BASE_DIR / "requirements.txt")
+    if missing:
+        ui.write_log("ERR: Dependencias faltantes detectadas al iniciar.")
+        for dep in missing:
+            ui.write_log(f"ERR: - {dep.package} (import: {dep.import_name})")
+
+        install_cmd = build_install_command([d.package for d in missing], sys.executable)
+        if install_cmd:
+            ui.write_log("SYS: Para corregirlo, instala con este comando:")
+            ui.write_log(f"SYS: {install_cmd}")
+
+        ui.update_activity(
+            estado="Error",
+            progreso=0,
+            evento="Dependencias faltantes detectadas"
+        )
+
+        try:
+            from PyQt6.QtWidgets import QMessageBox, QApplication
+            detail = "\n".join(f"- {d.package} (import: {d.import_name})" for d in missing)
+            box = QMessageBox(ui._win)
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setWindowTitle("Dependencias faltantes")
+            box.setText("Faltan dependencias de Python para algunas funciones de REX.")
+            box.setInformativeText(detail)
+            if install_cmd:
+                box.setDetailedText(f"Comando sugerido:\n{install_cmd}")
+                copy_btn = box.addButton("Copiar comando", QMessageBox.ButtonRole.ActionRole)
+            else:
+                copy_btn = None
+            close_btn = box.addButton("Cerrar", QMessageBox.ButtonRole.AcceptRole)
+            box.setDefaultButton(close_btn)
+            box.exec()
+
+            if copy_btn is not None and box.clickedButton() == copy_btn:
+                app = QApplication.instance()
+                if isinstance(app, QApplication):
+                    clipboard = app.clipboard()
+                    if clipboard is not None:
+                        clipboard.setText(install_cmd)
+                        ui.write_log("SYS: Comando de instalación copiado al portapapeles.")
+        except Exception:
+            pass
+    else:
+        ui.write_log("SYS: Autochequeo de dependencias completado: OK")
 
     # 3. Crear Controlador (RexController) vinculando Vista y Modelo
     controller = RexController(model, ui)

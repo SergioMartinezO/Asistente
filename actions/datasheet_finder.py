@@ -45,11 +45,11 @@ def datasheet_finder(parameters: dict, player=None, speak=None):
 
     # ── Búsqueda general — abre las 2 mejores fuentes ────────────
     else:
+        # Open a single browser destination to avoid spawning duplicate tabs/windows.
         webbrowser.open(fuentes["alldatasheet"])
-        webbrowser.open(fuentes["octopart"])
         result = (
-            f"Buscando datasheet de {component} en AllDatasheet y Octopart. "
-            f"También puedes buscar en Digi-Key y Mouser para disponibilidad y precio."
+            f"Buscando datasheet de {component} en AllDatasheet. "
+            f"También puedes buscar en Octopart, Digi-Key y Mouser para disponibilidad y precio."
         )
         say(result)
         return result

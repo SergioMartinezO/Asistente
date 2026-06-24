@@ -19,6 +19,17 @@ from playwright.async_api import (
     TimeoutError as PlaywrightTimeout,
 )
 _OS = platform.system()   # "Windows" | "Darwin" | "Linux"
+_REPORT_DIR = Path(os.environ.get("REX_REPORT_DIR", r"D:\IA\Asistente\Report"))
+
+
+def _resolve_report_file(path: str | None, default_name: str) -> str:
+    _REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    if not path:
+        return str(_REPORT_DIR / default_name)
+    p = Path(path).expanduser()
+    if p.is_absolute():
+        return str(_REPORT_DIR / p.name)
+    return str(_REPORT_DIR / p)
 
 def _normalize_url(url: str) -> str:
     """
@@ -554,14 +565,27 @@ class _BrowserSession:
         result_url = await _do_goto(page)
 
         if result_url in ("about:blank", "", None, prev_url) and prev_url in ("about:blank", "", None):
-            print(f"[Browser] Still blank after goto — retrying on new tab: {url}")
+            print(f"[Browser] Still blank after goto — retrying once on a fresh tab: {url}")
             try:
-                # Use new_tab method which has context validation
-                retry_result = await self.new_tab(url)
-                if "Opened:" in retry_result or "New tab opened" in retry_result:
-                    return retry_result
+                # Retry once without recursing through new_tab() to avoid infinite reopen loops.
+                retry_page = None
+                if self._context is not None:
+                    retry_page = await self._context.new_page()
+                else:
+                    raise RuntimeError("Context is closed")
+                self._page = retry_page
+                result_url = await _do_goto(retry_page)
             except Exception as e:
-                print(f"[Browser] New-tab retry failed: {e}")
+                print(f"[Browser] Fresh-tab retry failed: {e}")
+                try:
+                    # Last-resort recovery: refresh the session once and retry navigation.
+                    self._context = None
+                    self._page = None
+                    retry_page = await self._get_page()
+                    self._page = retry_page
+                    result_url = await _do_goto(retry_page)
+                except Exception as e2:
+                    print(f"[Browser] Session recovery retry failed: {e2}")
 
         if result_url and result_url not in ("about:blank", "", None):
             return f"Opened: {result_url}"
@@ -729,7 +753,7 @@ class _BrowserSession:
     async def screenshot(self, path: str = None) -> str:
         page = await self._get_page()
         try:
-            save_path = path or str(Path.home() / "Desktop" / "rex_screenshot.png")
+            save_path = _resolve_report_file(path, "rex_screenshot.png")
             await page.screenshot(path=save_path, full_page=False)
             return f"Screenshot saved: {save_path}"
         except Exception as e:
