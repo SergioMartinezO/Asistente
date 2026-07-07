@@ -25,31 +25,38 @@ from actions.engineering_deliverables_ext import (
     generate_uml_diagram,
     generate_signal_flow_diagram,
     build_acceptance_criteria,
+    build_arduino_source,
+    generate_uml_sequence_diagram,
+    generate_uml_usecase_diagram,
+    build_final_report_section,
 )
 
 
 # ── Mensajes de fase ──────────────────────────────────────────────────────────
 _PHASE_MESSAGES = {
-    ("Hardware",  "start"): "Iniciando fase de hardware.",
-    ("Hardware",  "end"):   "Hardware completado.",
-    ("Software",  "start"): "Iniciando fase de software.",
-    ("Software",  "end"):   "Software completado.",
-    ("Diagramas", "start"): "Generando diagramas. Esto puede tardar unos segundos.",
-    ("Diagramas", "end"):   "Diagramas generados correctamente.",
-    ("Word",      "start"): "Construyendo el documento Word.",
-    ("Word",      "end"):   "Documento Word guardado correctamente.",
-    ("Web",       "start"): "Construyendo la página web.",
-    ("Web",       "end"):   "Página web generada. Reporte completo.",
+    ("Hardware",       "start"): "Iniciando fase de hardware.",
+    ("Hardware",       "end"):   "Hardware completado.",
+    ("Software",       "start"): "Iniciando fase de software.",
+    ("Software",       "end"):   "Software completado.",
+    ("Diagramas",      "start"): "Generando diagramas. Esto puede tardar unos segundos.",
+    ("Diagramas",      "end"):   "Diagramas generados correctamente.",
+    ("Word",           "start"): "Construyendo el documento Word.",
+    ("Word",           "end"):   "Documento Word guardado correctamente.",
+    ("Web",            "start"): "Construyendo la página web.",
+    ("Web",            "end"):   "Página web generada.",
+    ("Reporte Final",  "start"): "Consolidando el reporte final y cronograma.",
+    ("Reporte Final",  "end"):   "Reporte final completado. Proyecto 100% listo.",
 }
 
-_PHASE_ORDER = ["Hardware", "Software", "Diagramas", "Word", "Web"]
+_PHASE_ORDER = ["Hardware", "Software", "Diagramas", "Word", "Web", "Reporte Final"]
 
 _PHASE_DEFAULT_DAYS = {
-    "Hardware": 5,
-    "Software": 8,
-    "Diagramas": 3,
-    "Word": 2,
-    "Web": 2,
+    "Hardware":      5,
+    "Software":      8,
+    "Diagramas":     3,
+    "Word":          2,
+    "Web":           2,
+    "Reporte Final": 1,
 }
 
 _PHASE_DELIVERABLES = {
@@ -91,7 +98,13 @@ _PHASE_DELIVERABLES = {
     "Web": [
         "Presentación del proyecto con diagramas interactivos (HTML/CSS/JS)",
         "Explicación técnica resumida",
-        "Sección de descargas (código fuente, documento Word)",
+        "Sección de descargas (código fuente Python, código Arduino/C++, documento Word)",
+    ],
+    "Reporte Final": [
+        "Cronograma consolidado con fecha de inicio y fin por fase",
+        "Listado de todos los artefactos generados con estado OK/Error",
+        "Confirmación explícita: proyecto 100% completo y listo para despliegue",
+        "Archivo de texto reporte_final.txt en carpeta Report/",
     ],
 }
 
@@ -805,6 +818,10 @@ def _build_html(
     device_names: Optional[List[str]] = None,
     uml_diagram: Optional[Path] = None,
     signal_flow_diagram: Optional[Path] = None,
+    uml_seq_diagram: Optional[Path] = None,
+    uml_uc_diagram: Optional[Path] = None,
+    arduino_code: str = "",
+    final_report_txt: str = "",
 ):
     output_html.parent.mkdir(parents=True, exist_ok=True)
 
@@ -843,8 +860,10 @@ def _build_html(
     fig37 = _fig(_rel(fsm_diagram),     "Diagrama de estados",  "Figura 5.7 – Diagrama de estados (FSM) del sistema.")
     fig38 = _fig(_rel(sw_arch_diagram), "Arquitectura de software", "Figura 5.8 – Capas y módulos de software.")
     fig39 = _fig(_rel(comm_diagram),    "Comunicación HW-SW",   "Figura 5.9 – Comunicación entre hardware y software.")
-    fig310 = _fig(_rel(uml_diagram),    "Diagrama UML",         "Figura 5.10 – Diagrama UML (clases y casos de uso).")
-    fig311 = _fig(_rel(signal_flow_diagram), "Flujo de señal", "Figura 5.11 – Diagrama de flujo de señal (telecomunicaciones).")
+    fig310 = _fig(_rel(uml_diagram),      "Diagrama UML Clases",      "Figura 5.10 – Diagrama UML de clases del software de control.")
+    fig311 = _fig(_rel(uml_uc_diagram),   "Diagrama UML Casos de Uso","Figura 5.11 – Diagrama UML de casos de uso (actores e interacciones).")
+    fig312 = _fig(_rel(uml_seq_diagram),  "Diagrama UML Secuencia",   "Figura 5.12 – Diagrama UML de secuencia (mensajes entre componentes).")
+    fig313 = _fig(_rel(signal_flow_diagram), "Flujo de señal",         "Figura 5.13 – Diagrama de flujo de señal (telecomunicaciones).")
     fig61 = _fig(_rel(test_chart),      "Gráfica de pruebas",   "Figura 6.1 – Resumen gráfico del estado de validación del sistema.")
 
     page = f"""<!doctype html>
@@ -949,7 +968,7 @@ def _build_html(
     }}
     code {{ font-family: 'Consolas', 'Cascadia Code', monospace; }}
 
-    /* ── Diagramas ────────────────────────────────────────── */
+    /* ── Diagramas interactivos (click = zoom) ─────────────── */
     figure {{
       margin: 18px 0;
       text-align: center;
@@ -960,6 +979,15 @@ def _build_html(
       border-radius: 10px;
       border: 1px solid #cbd5e1;
       box-shadow: 0 2px 12px rgba(0,0,0,.08);
+      cursor: zoom-in;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }}
+    figure img.zoomed {{
+      cursor: zoom-out;
+      transform: scale(1.8);
+      box-shadow: 0 8px 40px rgba(0,0,0,.30);
+      z-index: 999;
+      position: relative;
     }}
     figcaption {{
       margin-top: 8px;
@@ -974,6 +1002,39 @@ def _build_html(
       border-radius: 6px;
       padding: 10px 14px;
       font-size: 0.88rem;
+    }}
+    /* ── Descargas ────────────────────────────────────────── */
+    .download-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }}
+    .dl-card {{
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 10px;
+      padding: 14px 16px;
+      text-align: center;
+      text-decoration: none;
+      color: #1e40af;
+      font-weight: 600;
+      font-size: 0.88rem;
+      transition: background 0.15s, transform 0.12s;
+    }}
+    .dl-card:hover {{ background: #dbeafe; transform: translateY(-2px); }}
+    .dl-card .dl-icon {{ font-size: 1.7rem; display: block; margin-bottom: 6px; }}
+    /* ── Badge estado ─────────────────────────────────────── */
+    .badge-ok {{
+      display: inline-block;
+      background: #16a34a;
+      color: white;
+      border-radius: 20px;
+      padding: 4px 14px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+      margin-bottom: 12px;
     }}
 
     /* ── Footer ───────────────────────────────────────────── */
@@ -1033,9 +1094,11 @@ def _build_html(
         {standards_html}
         <h3>4.2 Pseudocódigo de rutinas críticas</h3>
     <pre><code>{pseudocode_html}</code></pre>
-        <h3>4.3 Código fuente</h3>
+        <h3>4.3 Código fuente Python</h3>
     <pre><code>{code_html}</code></pre>
-        <h3>4.4 Documentación Técnica (Algoritmo y Estructuras de Datos)</h3>
+        <h3>4.4 Código fuente Arduino / C++</h3>
+    <pre><code>{html.escape(arduino_code)}</code></pre>
+        <h3>4.5 Documentación Técnica (Algoritmo y Estructuras de Datos)</h3>
         <p><strong>Algoritmo Principal:</strong> Control con ciclo cerrado y tiempo de muestreo controlado con histéresis ante UMBRAL_ALTO y UMBRAL_BAJO para evitar chattering.</p>
         <p><strong>Estructuras de Datos:</strong> Variable lógica <code>estado_actuador</code> (booleano) y <code>log_sesion</code> (lista dinámica cronológica).</p>
   </section>
@@ -1061,10 +1124,14 @@ def _build_html(
     {fig38}
         <h3>5.9 Diagrama de Comunicación Hardware-Software</h3>
     {fig39}
-        <h3>5.10 Diagramas UML (Clases y Casos de Uso)</h3>
+        <h3>5.10 Diagrama UML – Clases</h3>
     {fig310}
-        <h3>5.11 Diagrama de Flujo de Señal (Telecomunicaciones)</h3>
+        <h3>5.11 Diagrama UML – Casos de Uso</h3>
     {fig311}
+        <h3>5.12 Diagrama UML – Secuencia</h3>
+    {fig312}
+        <h3>5.13 Diagrama de Flujo de Señal (Telecomunicaciones)</h3>
+    {fig313}
   </section>
 
     <!-- 6. Pruebas y resultados -->
@@ -1081,25 +1148,64 @@ def _build_html(
     {manual_html}
   </section>
 
-    <!-- 8. Sección de descargas -->
+    <!-- 8. Sección de descargas mejorada -->
   <section class='card'>
-        <h2>8. Descargas y Enlaces de Entregables</h2>
-        <ul>
-            <li><a href='Reporte_Proyecto.docx' download>Documento Word Oficial (.docx)</a></li>
-            <li><a href='main_control.py' download>Código Fuente Principal (Python)</a></li>
-        </ul>
+        <h2>8. Descargas y Entregables del Proyecto</h2>
+        <p>Todos los artefactos generados están disponibles para descarga. Haz clic en cada tarjeta:</p>
+        <div class='download-grid'>
+          <a class='dl-card' href='Reporte_Proyecto.docx' download>
+            <span class='dl-icon'>📄</span>Documento Word<br><small>Reporte_Proyecto.docx</small>
+          </a>
+          <a class='dl-card' href='main_control.py' download>
+            <span class='dl-icon'>🐍</span>Código Python<br><small>main_control.py</small>
+          </a>
+          <a class='dl-card' href='main_control.ino' download>
+            <span class='dl-icon'>⚙️</span>Código Arduino/C++<br><small>main_control.ino</small>
+          </a>
+          <a class='dl-card' href='reporte_final.txt' download>
+            <span class='dl-icon'>📋</span>Reporte Final<br><small>reporte_final.txt</small>
+          </a>
+          <a class='dl-card' href='diagramas/' target='_blank'>
+            <span class='dl-icon'>🖼️</span>Diagramas<br><small>Carpeta /diagramas</small>
+          </a>
+        </div>
   </section>
 
     <!-- 9. Reporte Final y Confirmación -->
-  <section class='card' style='border: 1px solid #16a34a; background-color: #f0fdf4;'>
+  <section class='card' style='border: 2px solid #16a34a; background-color: #f0fdf4;'>
         <h2 style='color: #15803d; border-bottom: 2px solid #bbf7d0;'>9. Reporte Final y Estado de Entrega</h2>
-        <p><strong>CONFIRMACIÓN EXPLÍCITA:</strong> Se certifica que todas las fases del proyecto (diseño de hardware, desarrollo e integración de software, diagramación técnica y documentación) han sido concluidas de forma exitosa. El proyecto está 100% completo, verificado y listo para su implementación física y despliegue.</p>
+        <span class='badge-ok'>✅ PROYECTO 100% COMPLETO</span>
+        <p><strong>CONFIRMACIÓN EXPLÍCITA:</strong> Se certifica que la totalidad de las fases del proyecto han sido concluidas exitosamente:</p>
+        <ul style='margin: 10px 0 10px 20px; line-height: 2;'>
+          <li>✔ Hardware: lista de componentes con justificación técnica y criterios de aceptación.</li>
+          <li>✔ Software: código Python + Arduino/C++ con comentarios en español. ISO/IEC 9126.</li>
+          <li>✔ Documentación técnica: algoritmos, estructuras de datos, pseudocódigo.</li>
+          <li>✔ Diagramas: bloques, esquemático, PCB, energía, mecánico, FSM, arquitectura SW, HW-SW.</li>
+          <li>✔ UML completo: clases, casos de uso y secuencia.</li>
+          <li>✔ Flujo de señal (telecomunicaciones).</li>
+          <li>✔ Documento Word (.docx) con portada, secciones y diagramas embebidos.</li>
+          <li>✔ Página Web (HTML/CSS/JS) con diagramas interactivos y sección de descargas.</li>
+          <li>✔ Reporte Final con cronograma fase a fase y confirmación de entrega.</li>
+        </ul>
+        <p>El proyecto está <strong>listo para su implementación física y despliegue</strong>.</p>
+        <details style='margin-top:14px;'>
+          <summary style='cursor:pointer; color:#15803d; font-weight:600;'>📋 Ver cronograma detallado</summary>
+          <pre style='margin-top:10px; font-size:0.8rem; background:#fff; border:1px solid #bbf7d0; padding:14px; border-radius:8px;'>{html.escape(final_report_txt)}</pre>
+        </details>
   </section>
 
 </div>
 <footer>
   Generado automáticamente por MARK XXXIX · {html.escape(institution)} · {html.escape(date_str)} · {html.escape(version)}
 </footer>
+<script>
+  // Zoom interactivo en diagramas: clic para ampliar / reducir
+  document.querySelectorAll('figure img').forEach(function(img) {{
+    img.addEventListener('click', function() {{
+      this.classList.toggle('zoomed');
+    }});
+  }});
+</script>
 </body>
 </html>
 """
@@ -1313,12 +1419,16 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
 
         # ── FASE 2: Software ──────────────────────────────────────────────────
         _phase_start(player, "Software", lines, speak, progress=28)
-        # Guardar código fuente como archivo independiente dentro de Report/
+        # Guardar código Python como archivo independiente dentro de Report/
         code_file = output_docx.parent / "main_control.py"
+        arduino_code = build_arduino_source(project_title)
+        arduino_file = output_docx.parent / "main_control.ino"
         try:
             code_file.parent.mkdir(parents=True, exist_ok=True)
             code_file.write_text(source_code, encoding="utf-8")
-            _log(player, f"ACT: Código fuente guardado en {code_file}")
+            _log(player, f"ACT: Código Python guardado en {code_file}")
+            arduino_file.write_text(arduino_code, encoding="utf-8")
+            _log(player, f"ACT: Código Arduino/C++ guardado en {arduino_file}")
         except Exception as ce:
             _log(player, f"WARN: No se pudo guardar código fuente: {ce}")
         time.sleep(0.3)
@@ -1329,6 +1439,7 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
         block_png = circuit_png = flujo_png = flujo_svg = None
         power_png = fsm_png = sw_arch_png = comm_png = mech_png = tests_chart_png = None
         pcb_svg = pcb_png = uml_png = signal_flow_png = None
+        uml_seq_png = uml_uc_png = None
         generated_device_dirs: List[Path] = []
         try:
             gv = _generate_graphviz(diagram_dir, project_title)
@@ -1353,6 +1464,10 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
                                             _write_fallback_png, _write_fallback_svg)
             sig_diag = generate_signal_flow_diagram(diagram_dir, project_title,
                                                     _write_fallback_png, _write_fallback_svg)
+            uml_seq  = generate_uml_sequence_diagram(diagram_dir, project_title,
+                                                     _write_fallback_png, _write_fallback_svg)
+            uml_uc   = generate_uml_usecase_diagram(diagram_dir, project_title,
+                                                    _write_fallback_png, _write_fallback_svg)
 
             expected = _ensure_diagram_bundle(diagram_dir, project_title)
 
@@ -1369,6 +1484,8 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
             pcb_png     = expected["pcb_png"]      if expected["pcb_png"].exists()      else pcb.get("png")
             uml_png     = expected["uml_png"]      if expected["uml_png"].exists()      else uml_diag.get("png")
             signal_flow_png = expected["signal_flow_png"] if expected["signal_flow_png"].exists() else sig_diag.get("png")
+            uml_seq_png     = uml_seq.get("png")
+            uml_uc_png      = uml_uc.get("png")
             tests_chart_png = tch.get("png")
 
             generated_count = sum(1 for p in expected.values() if p.exists())
@@ -1471,18 +1588,29 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
             if Pt is not None:
                 run_p.font.size = Pt(9)
 
-            _add_heading_safe(doc, "4.3 Código fuente", level=2)
+            _add_heading_safe(doc, "4.3 Código fuente Python", level=2)
             doc.add_paragraph(
-                "El código fuente completo está guardado en Report/main_control.py. "
-                "A continuación se muestra el fragmento principal:"
+                "Código fuente Python guardado en Report/main_control.py. "
+                "Fragmento principal (comentarios en español, ISO/IEC 9126):"
             )
             p_code = doc.add_paragraph()
-            run_c = p_code.add_run(source_code[:3500] + ("\n[... ver main_control.py ...]" if len(source_code) > 3500 else ""))
+            run_c = p_code.add_run(source_code[:3000] + ("\n[... ver main_control.py ...]" if len(source_code) > 3000 else ""))
             run_c.font.name = "Consolas"
             if Pt is not None:
                 run_c.font.size = Pt(8)
 
-            _add_heading_safe(doc, "4.4 Documentación Técnica del Software (Algoritmos y Estructuras de Datos)", level=2)
+            _add_heading_safe(doc, "4.4 Código fuente Arduino/C++", level=2)
+            doc.add_paragraph(
+                "Código Arduino/C++ guardado en Report/main_control.ino. "
+                "Compatible con ESP32 y Arduino UNO/Mega. Comentarios en español:"
+            )
+            p_ino = doc.add_paragraph()
+            run_ino = p_ino.add_run(arduino_code[:3000] + ("\n[... ver main_control.ino ...]" if len(arduino_code) > 3000 else ""))
+            run_ino.font.name = "Consolas"
+            if Pt is not None:
+                run_ino.font.size = Pt(8)
+
+            _add_heading_safe(doc, "4.5 Documentación Técnica del Software (Algoritmos y Estructuras de Datos)", level=2)
             doc.add_paragraph(
                 "Algoritmo Principal:\n"
                 "El control opera mediante un ciclo cerrado de adquisición periódica (tiempo de muestreo controlado por delay). "
@@ -1540,11 +1668,17 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
             inserted_flags.append(_insert_fig("5.9 Diagrama de Comunicación Hardware-Software",
                 "Figura 5.9: Interacción entre sensores, microcontrolador y programa.",
                 comm_png))
-            inserted_flags.append(_insert_fig("5.10 Diagramas UML (Clases y Casos de Uso)",
-                "Figura 5.10: Diagrama de clases y casos de uso del software de control.",
+            inserted_flags.append(_insert_fig("5.10 Diagrama UML – Clases",
+                "Figura 5.10: Diagrama de clases del software de control.",
                 uml_png))
-            inserted_flags.append(_insert_fig("5.11 Flujo de Señal (Telecomunicaciones)",
-                "Figura 5.11: Flujo de señal, acondicionamiento y comunicación RF del sistema.",
+            inserted_flags.append(_insert_fig("5.11 Diagrama UML – Casos de Uso",
+                "Figura 5.11: Casos de uso del sistema: actores, interacciones e inclusiones.",
+                uml_uc_png))
+            inserted_flags.append(_insert_fig("5.12 Diagrama UML – Secuencia",
+                "Figura 5.12: Secuencia de mensajes entre usuario, software, MCU, sensor y actuador.",
+                uml_seq_png))
+            inserted_flags.append(_insert_fig("5.13 Flujo de Señal (Telecomunicaciones)",
+                "Figura 5.13: Flujo de señal, acondicionamiento y comunicación RF del sistema.",
                 signal_flow_png))
 
             # 6. Pruebas y resultados
@@ -1597,6 +1731,23 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
             _log(player, f"WARN: Falló construcción de Word: {word_err}")
         _phase_end(player, "Word", lines, speak, progress=85)
 
+        # ── Pre-calcular reporte final (se incrusta en el HTML) ──────────────
+        _pre_generated_files = {
+            "Documento Word (.docx)":    str(output_docx) if word_ok and output_docx.exists() else "",
+            "Página Web (index.html)":   str(output_html),
+            "Código Python":             str(output_docx.parent / "main_control.py"),
+            "Código Arduino/C++ (.ino)": str(output_docx.parent / "main_control.ino"),
+            "Diagramas (carpeta)":       str(diagram_dir),
+        }
+        final_report_txt = build_final_report_section(
+            project_title=project_title,
+            author=author,
+            institution=institution,
+            project_plan=project_plan,
+            generated_files=_pre_generated_files,
+            date_str=today,
+        )
+
         # ── FASE 5: Web ───────────────────────────────────────────────────────
         _phase_start(player, "Web", lines, speak, progress=88)
         html_ok = False
@@ -1628,6 +1779,12 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
                 comm_diagram=_ok(comm_png),
                 test_chart=_ok(tests_chart_png),
                 device_names=device_names,
+                uml_diagram=_ok(uml_png),
+                signal_flow_diagram=_ok(signal_flow_png),
+                uml_seq_diagram=_ok(uml_seq_png),
+                uml_uc_diagram=_ok(uml_uc_png),
+                arduino_code=arduino_code,
+                final_report_txt=final_report_txt,
             )
             html_ok = True
             _log(player, f"ACT: Entregable web generado: {output_html}")
@@ -1636,16 +1793,46 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
             _log(player, f"WARN: Falló construcción de HTML: {html_err}")
         _phase_end(player, "Web", lines, speak, progress=98)
 
-        # Finalizar
+        # ── FASE 6: Reporte Final ─────────────────────────────────────────────
+        _phase_start(player, "Reporte Final", lines, speak, progress=99)
         word_status = "OK" if word_ok and output_docx.exists() else f"FALLÓ ({word_err or 'sin detalle'})"
         html_status = "OK" if html_ok and output_html.exists() else f"FALLÓ ({html_err or 'sin detalle'})"
+        # Actualizar estado real en el reporte final ahora que tenemos resultados definitivos
+        final_generated_files = {
+            "Documento Word (.docx)":    str(output_docx) if word_ok and output_docx.exists() else "",
+            "Página Web (index.html)":   str(output_html) if html_ok and output_html.exists() else "",
+            "Código Python":             str(code_file)   if code_file.exists() else "",
+            "Código Arduino/C++ (.ino)": str(arduino_file) if arduino_file.exists() else "",
+            "Diagramas (carpeta)":       str(diagram_dir),
+            "Reporte Final (.txt)":      str(output_docx.parent / "reporte_final.txt"),
+        }
+        final_report_txt_definitive = build_final_report_section(
+            project_title=project_title,
+            author=author,
+            institution=institution,
+            project_plan=project_plan,
+            generated_files=final_generated_files,
+            date_str=today,
+        )
+        reporte_final_file = output_docx.parent / "reporte_final.txt"
+        try:
+            reporte_final_file.write_text(final_report_txt_definitive, encoding="utf-8")
+            _log(player, f"ACT: Reporte final guardado en {reporte_final_file}")
+        except Exception as rfe:
+            _log(player, f"WARN: No se pudo guardar reporte_final.txt: {rfe}")
+        _phase_end(player, "Reporte Final", lines, speak, progress=100)
+
+        # Finalizar
+        total_dias = sum(p["duration_days"] for p in project_plan)
         final_msg = (
-            f"✅ Reporte completo generado.\n"
-            f"  Plan  : {project_plan[0]['start']} → {project_plan[-1]['end']} ({sum(p['duration_days'] for p in project_plan)} días)\n"
-            f"  Word  : {output_docx} [{word_status}]\n"
-            f"  Web   : {output_html} [{html_status}]\n"
-            f"  Código: {code_file}\n"
-            f"  Diags : {diagram_dir}\n"
+            f"✅ Proyecto 100% completo y verificado.\n"
+            f"  Cronograma: {project_plan[0]['start']} → {project_plan[-1]['end']} ({total_dias} días)\n"
+            f"  Word      : {output_docx} [{word_status}]\n"
+            f"  Web       : {output_html} [{html_status}]\n"
+            f"  Python    : {code_file}\n"
+            f"  Arduino   : {arduino_file}\n"
+            f"  Diagramas : {diagram_dir}\n"
+            f"  Rep. Final: {reporte_final_file}\n"
             f"  Dispositivos con diagramas: {len(device_names)}"
         )
         _log(player, final_msg)

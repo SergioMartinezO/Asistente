@@ -489,43 +489,74 @@ TOOL_DECLARATIONS = [
 {
     "name": "engineering_report",
     "description": (
-        "Genera un paquete completo de diseño de producto electrónico en fases: "
-        "hardware, software, diagramas (Graphviz/Mermaid), documento Word desde plantilla y página web HTML. "
-        "Usa por defecto la plantilla D:\\IA\\Asistente\\templade\\templade.docx y genera "
-        "D:\\IA\\Asistente\\Report\\Reporte_Proyecto.docx + D:\\IA\\Asistente\\Report\\index.html."
+        "Genera el paquete COMPLETO de entregables de ingeniería en 6 fases: "
+        "(1) Hardware — lista de componentes con justificación técnica, criterios de aceptación, BOM; "
+        "(2) Software — código Python comentado en español + código Arduino/C++ con docstrings, ISO/IEC 9126, pseudocódigo; "
+        "(3) Diagramas — bloques funcionales, circuito esquemático, PCB, energía, mecánico, FSM, arquitectura SW, "
+        "comunicación HW-SW, UML (clases + casos de uso + secuencia), flujo de señal; "
+        "(4) Word — .docx con portada (título/autor), secciones Introducción/Hardware/Software/Diagramas/Conclusiones, "
+        "tablas de especificaciones técnicas, diagramas embebidos; "
+        "(5) Web — HTML/CSS/JS con diagramas interactivos (zoom por clic), explicación técnica, "
+        "sección de descargas (Word, Python, Arduino, reporte_final.txt); "
+        "(6) Reporte Final — cronograma fase-a-fase con inicio/fin, listado de artefactos y "
+        "confirmación explícita de que el proyecto está 100% completo y listo. "
+        "Salidas por defecto: D:\\IA\\Asistente\\Report\\Reporte_Proyecto.docx, index.html, main_control.py, "
+        "main_control.ino, reporte_final.txt. "
+        "ÚSALA cuando el usuario pida 'generar el informe técnico', 'entregables del proyecto', "
+        "'reporte de ingeniería', 'genera el Word' o variantes similares."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "project_title": {"type": "STRING", "description": "Título del proyecto."},
-            "author": {"type": "STRING", "description": "Autor del documento. Default: Sergio Antonio Martinez Orozco"},
-            "institution": {"type": "STRING", "description": "Institución. Default: UNAD"},
-            "overview": {"type": "STRING", "description": "Resumen funcional del producto."},
-            "project_start_date": {"type": "STRING", "description": "Fecha de inicio del proyecto (YYYY-MM-DD o DD/MM/YYYY)."},
+            "project_title":      {"type": "STRING", "description": "Título completo del proyecto."},
+            "author":             {"type": "STRING", "description": "Autor. Default: Sergio Antonio Martinez Orozco"},
+            "institution":        {"type": "STRING", "description": "Institución. Default: UNAD CCAV Cúcuta"},
+            "overview":           {"type": "STRING", "description": "Descripción funcional del producto/sistema (2-5 oraciones)."},
+            "project_start_date": {"type": "STRING", "description": "Fecha de inicio (YYYY-MM-DD o DD/MM/YYYY). Default: hoy."},
             "phase_durations": {
                 "type": "OBJECT",
-                "description": "Duración en días por fase. Claves: Hardware, Software, Diagramas, Word, Web"
+                "description": (
+                    "Duración en días por fase. Claves válidas: "
+                    "Hardware, Software, Diagramas, Word, Web, Reporte Final. "
+                    "Ejemplo: {\"Hardware\": 5, \"Software\": 10, \"Reporte Final\": 1}"
+                )
             },
             "software_standards": {
                 "type": "ARRAY",
                 "items": {"type": "STRING"},
-                "description": "Lista de estándares de desarrollo de software a aplicar en el diseño."
+                "description": "Estándares de calidad de software. Default: ISO/IEC 9126 + buenas prácticas."
             },
             "components": {
                 "type": "ARRAY",
                 "items": {"type": "OBJECT"},
-                "description": "Lista estructurada de componentes: nombre, especificacion, justificacion."
+                "description": (
+                    "Lista de componentes del circuito. Cada objeto: "
+                    "{nombre, especificacion, justificacion}. "
+                    "Si se omite, se usan componentes ESP32 genéricos."
+                )
             },
             "hardware_items": {
                 "type": "ARRAY",
                 "items": {"type": "STRING"},
-                "description": "Lista de componentes con especificaciones/justificación técnica."
+                "description": "Alternativa simple: lista de strings con nombres de componentes."
             },
-            "source_code": {"type": "STRING", "description": "Código fuente (Arduino/Python/C) comentado en español."},
-            "template_path": {"type": "STRING", "description": "Ruta de plantilla .docx. Default: D:\\IA\\Asistente\\templade\\templade.docx"},
-            "output_docx": {"type": "STRING", "description": "Ruta de salida del Word final."},
-            "output_html": {"type": "STRING", "description": "Ruta de salida de index.html."},
-            "diagram_dir": {"type": "STRING", "description": "Carpeta para diagramas PNG/SVG."}
+            "source_code": {
+                "type": "STRING",
+                "description": (
+                    "Código fuente Python personalizado (comentado en español). "
+                    "Si se omite, se genera un control genérico con histéresis para ESP32."
+                )
+            },
+            "devices": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"},
+                "description": "Dispositivos/subsistemas del proyecto. Genera diagramas específicos por cada uno."
+            },
+            "template_path":  {"type": "STRING", "description": "Ruta plantilla .docx. Default: D:\\IA\\Asistente\\templade\\templade.docx"},
+            "output_docx":    {"type": "STRING", "description": "Ruta de salida Word. Default: D:\\IA\\Asistente\\Report\\Reporte_Proyecto.docx"},
+            "output_html":    {"type": "STRING", "description": "Ruta de salida HTML. Default: D:\\IA\\Asistente\\Report\\index.html"},
+            "diagram_dir":    {"type": "STRING", "description": "Carpeta para diagramas PNG/SVG. Default: D:\\IA\\Asistente\\Report\\diagramas"},
+            "version":        {"type": "STRING", "description": "Versión del documento. Default: v1.0"}
         },
         "required": ["project_title"]
     }
