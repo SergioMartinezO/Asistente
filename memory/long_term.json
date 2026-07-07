@@ -1,0 +1,36 @@
+{
+  "identity": {
+    "assistant_name": {
+      "value": "Rex",
+      "updated": "2026-06-10"
+    },
+    "profession": {
+      "value": "Information Systems Analysis and Development Technologist",
+      "updated": "2026-06-10"
+    }
+  },
+  "preferences": {
+    "assistant_personality": {
+      "value": "profesional y eficiente",
+      "updated": "2026-06-10"
+    },
+    "default_save_path": {
+      "value": "Desktop/Home",
+      "updated": "2026-06-19"
+    }
+  },
+  "projects": {
+    "individual_assistant_project": {
+      "value": "working on an individual assistant",
+      "updated": "2026-06-10"
+    }
+  },
+  "relationships": {
+    "uncle_name": {
+      "value": "Ciro",
+      "updated": "2026-06-23"
+    }
+  },
+  "wishes": {},
+  "notes": {}
+}
