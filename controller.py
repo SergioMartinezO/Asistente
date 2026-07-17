@@ -123,7 +123,7 @@ class RexController:
                 if self._main_loop.is_running():
                     asyncio.run_coroutine_threadsafe(
                         self.session.send_realtime_input(
-                            {"text": cleaned, "mime_type": "text/plain"}
+                            text=cleaned
                         ),
                         self._main_loop
                     )

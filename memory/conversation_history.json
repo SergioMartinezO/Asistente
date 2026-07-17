@@ -402,5 +402,70 @@
         "text": "Los resultados de la búsqueda están disponibles en el navegador. ¿Hay algo más con lo que pueda ayudarte?"
       }
     ]
+  },
+  {
+    "date": "2026-07-17 17:02",
+    "messages": [
+      {
+        "role": "user",
+        "text": "al 8 6 % , carga elevada."
+      },
+      {
+        "role": "rex",
+        "text": "Entendido, la carga de la CPU"
+      },
+      {
+        "role": "user",
+        "text": "Red, ¿me escuchas?"
+      },
+      {
+        "role": "rex",
+        "text": "Sí, Sergio, te escucho claramente. ¿En qué puedo ayudarte?"
+      },
+      {
+        "role": "user",
+        "text": "de la"
+      },
+      {
+        "role": "user",
+        "text": "Di me qué model o de inte ligencia arti ficial está trabajando."
+      },
+      {
+        "role": "rex",
+        "text": "Soy Rex, un asistente técnico especializado en ingeniería, con conocimientos en electrónica, sistemas, software, mecatrónica y telecomunicaciones."
+      },
+      {
+        "role": "user",
+        "text": "Di me c que sientes de nuevo."
+      },
+      {
+        "role": "rex",
+        "text": "Como inteligencia artificial, no tengo sentimientos como un humano. Sin embargo, estoy diseñado para ser eficiente y profesional en mis tareas."
+      },
+      {
+        "role": "user",
+        "text": "0 al 9 2 % , carga elevadas."
+      },
+      {
+        "role": "rex",
+        "text": "Perfecto, gracias por la información."
+      },
+      {
+        "role": "user",
+        "text": "En tus archivos"
+      },
+      {
+        "role": "rex",
+        "text": "En mis archivos"
+      },
+      {
+        "role": "user",
+        "text": "En tus archivos siente algo diferente."
+      },
+      {
+        "role": "rex",
+        "text": "Como IA, no puedo percibir cambios sensoriales como \"sentir\". Sin embargo, puedo analizar y gestionar mis archivos de manera eficiente. ¿Hay algo específico que te interese verificar?"
+      }
+    ]
   }
 ]

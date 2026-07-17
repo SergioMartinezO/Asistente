@@ -10,7 +10,8 @@ from google import genai
 # _safe_response_text, por lo que silenciamos el warning para evitar ruido.
 warnings.filterwarnings(
     "ignore",
-    message=r"there are non-data parts in the response: .*",
+    category=UserWarning,
+    message=r".*non-data parts in the response.*",
 )
 
 
