@@ -9,7 +9,7 @@ import time
 from collections import deque
 from pathlib import Path
 import sounddevice as sd
-import google.genai as genai
+
 from google.genai import types
 from agent.voice_queue import get_voice_queue, shutdown_voice_queue
 from ui import RexUI

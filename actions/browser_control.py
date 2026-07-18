@@ -506,7 +506,7 @@ class _BrowserSession:
             self._context = await engine_obj.launch_persistent_context(profile, **kwargs)
             await asyncio.sleep(0.5) 
             self._page = await self._context.new_page()
-            print(f"[Browser] ✅ Launched [{label}] profile={profile}")
+            print(f"[Browser] ✅ Launched [{label}] {profile=}")
             return
         except Exception as e:
             print(f"[Browser] ⚠️  Real profile failed for {label}: {e}")

@@ -1,17 +1,17 @@
 #youtube_video.py
-import json
+
 import re
 import sys
-import time
+
 import subprocess
-import shutil
+
 import webbrowser
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import quote_plus
 
-import pyautogui
-import numpy as np
+
+
 
 try:
     import requests
@@ -25,7 +25,7 @@ try:
 except ImportError:
     _TRANSCRIPT_OK = False
 
-from config import get_os, is_windows, is_mac, is_linux
+from config import is_windows, is_mac, is_linux
 
 
 def _get_base_dir() -> Path:
@@ -297,7 +297,7 @@ def _handle_play(parameters: dict, player) -> str:
         print(f"[YouTube] ✅ Browser opened for: {query}")
         return f"Playing: {query}"
 
-    print(f"[YouTube] ⚠️ Could not extract direct video URL, opening filtered search page")
+    print("[YouTube] ⚠️ Could not extract direct video URL, opening filtered search page")
     fallback_url = (
         f"https://www.youtube.com/results"
         f"?search_query={quote_plus(query)}"

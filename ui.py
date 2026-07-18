@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import math
-import os
+
 import platform
 import random
 import re
@@ -16,14 +16,14 @@ from datetime import datetime
 import psutil
 
 from PyQt6.QtCore import (
-    QEasingCurve, QMimeData, QObject, QPointF, QRectF, QSize, Qt,
+    QPointF, QRectF, Qt,
     QTimer, QUrl, pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QBrush, QColor, QDragEnterEvent, QDropEvent, QFont, QFontDatabase,
-    QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
+    QBrush, QColor, QDragEnterEvent, QDropEvent, QFont,
+    QKeySequence, QPainter, QPen, QPixmap,
     QDesktopServices,
-    QRadialGradient, QShortcut,
+    QShortcut,
     QTextImageFormat, QTextDocument, QTextCharFormat, QImage,
 )
 from PyQt6.QtWidgets import (
