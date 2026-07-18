@@ -10,8 +10,7 @@ from google import genai
 # _safe_response_text, por lo que silenciamos el warning para evitar ruido.
 warnings.filterwarnings(
     "ignore",
-    category=UserWarning,
-    message=r".*non-data parts in the response.*",
+    message=r"there are non-data parts in the response: .*",
 )
 
 
@@ -174,6 +173,15 @@ class _GenaiMock:
 
     @staticmethod
     def GenerativeModel(model_name: str = "gemini-2.5-flash", system_instruction: str = None):
+        # ── Enrutamiento de proveedor de texto (Gemini vs Qwen local) ──
+        # Todo el motor de entregables, planner, code_helper, dev_agent,
+        # etc. pasa por aquí. La voz (Gemini Live, controller.py) no se
+        # ve afectada por este cambio.
+        from core.local_model import get_text_provider, QwenLocalGenerativeModel
+
+        if get_text_provider() == "qwen_local":
+            return QwenLocalGenerativeModel(model_name, system_instruction)
+
         class GenerativeModelWrapper:
             def __init__(self, m_name, sys_inst):
                 self.m_name = m_name

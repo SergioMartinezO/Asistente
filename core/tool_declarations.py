@@ -222,6 +222,22 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "self_improve",
+        "description": (
+            "Analiza el propio código del asistente en busca de bugs y mejoras de calidad, "
+            "propone y aplica parches en una rama git aparte, corre las pruebas automatizadas, "
+            "y si pasan la deja lista para que el usuario la revise y haga merge manualmente. "
+            "Usar SOLO cuando el usuario pida explícitamente que el asistente se mejore, "
+            "se optimice o revise su propio código (ej. 'mejórate', 'revisa tu código', "
+            "'busca mejoras en tu código')."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
         "name": "agent_task",
         "description": (
             "Executes complex multi-step tasks requiring multiple different tools. "

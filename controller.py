@@ -890,6 +890,7 @@ class RexController:
                 "desktop_control": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.desktop", "desktop_control", parameters=args, player=self.ui)),
                 "code_helper": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.code_helper", "code_helper", parameters=args, player=self.ui, speak=self.speak)),
                 "dev_agent": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.dev_agent", "dev_agent", parameters=args, player=self.ui, speak=self.speak)),
+                "self_improve": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.self_improve", "self_improve", parameters=args, player=self.ui, speak=self.speak)),
                 "computer_control": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.computer_control", "computer_control", parameters=args, player=self.ui)),
                 "game_updater": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.game_updater", "game_updater", parameters=args, player=self.ui, speak=self.speak)),
                 "dev_tools": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.dev_tools", "dev_tools", parameters=args, player=self.ui, speak=self.speak)),
