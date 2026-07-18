@@ -1,11 +1,8 @@
 <#
-Grant write/modify permissions to current user for common user folders.
+Grant full control permissions to current user for common user folders + custom paths.
 
 Usage:
-  # Apply to common visible folders (Desktop, Documents, Downloads, Pictures, Music, Videos)
   .\grant_permissions.ps1
-
-  # Apply to all top-level folders under the user profile (DANGEROUS: will prompt for confirmation)
   .\grant_permissions.ps1 -All
 #>
 
@@ -20,10 +17,8 @@ function Get-CurrentUserIdentity {
     }
 
     try {
-        # Usar NTAccount evita errores de traducción con FileSystemAccessRule
         return $current.User.Translate([Security.Principal.NTAccount]).Value
     } catch {
-        # Fallback por compatibilidad
         return "$env:USERDOMAIN\$env:USERNAME"
     }
 }
@@ -40,21 +35,21 @@ function Grant-Permissions($path) {
         $acl = Get-Acl -Path $path
         $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
             $identity,
-            "Modify",
+            "FullControl",   # 🔹 Permisos de Control Total
             "ContainerInherit, ObjectInherit",
             "None",
             "Allow"
         )
         $acl.SetAccessRule($rule)
         Set-Acl -Path $path -AclObject $acl
-        Write-Host "Permisos otorgados para: $path" -ForegroundColor Green
+        Write-Host "Permisos de CONTROL TOTAL otorgados para: $path" -ForegroundColor Green
     } catch {
         Write-Host "No se pudieron aplicar permisos a: $path" -ForegroundColor Red
         Write-Host $_.Exception.Message -ForegroundColor Red
     }
 }
 
-# Common visible user folders
+# Carpetas comunes + rutas adicionales
 $common = @(
     (Join-Path -Path $env:USERPROFILE -ChildPath 'Desktop')
     (Join-Path -Path $env:USERPROFILE -ChildPath 'Documents')
@@ -62,6 +57,8 @@ $common = @(
     (Join-Path -Path $env:USERPROFILE -ChildPath 'Pictures')
     (Join-Path -Path $env:USERPROFILE -ChildPath 'Music')
     (Join-Path -Path $env:USERPROFILE -ChildPath 'Videos')
+    'D:\IA\Asistente'              # 🔹 Nueva ruta
+    'D:\IA\Asistente\Report'       # 🔹 Nueva ruta
 )
 
 if ($All) {
@@ -77,12 +74,11 @@ if ($All) {
         ForEach-Object { $_.FullName }
 
     foreach ($d in $dirs) {
-        # opcional: saltar AppData por seguridad
         if ($d -match '\\AppData$') { continue }
         Grant-Permissions -path $d
     }
 } else {
-    Write-Host "Aplicando permisos a carpetas comunes: $($common -join ', ')" -ForegroundColor Cyan
+    Write-Host "Aplicando permisos de CONTROL TOTAL a carpetas comunes y rutas adicionales: $($common -join ', ')" -ForegroundColor Cyan
     foreach ($p in $common) {
         Grant-Permissions -path $p
     }
