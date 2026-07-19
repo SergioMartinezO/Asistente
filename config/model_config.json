@@ -1,12 +1,12 @@
 {
-    "text_provider": "qwen_local",
-    "qwen_local": {
-        "base_url": "http://localhost:11434/v1",
-        "model_name": "qwen3:8b",
-        "timeout_seconds": 180,
-        "temperature": 0.4,
-        "max_tokens": 4096,
-        "fallback_to_gemini": true,
-        "fallback_model": "gemini-2.5-flash"
-    }
+  "text_provider": "qwen_local",
+  "qwen_local": {
+    "base_url": "http://localhost:11434/v1",
+    "model_name": "qwen3:14b",
+    "timeout_seconds": 180,
+    "temperature": 0.4,
+    "max_tokens": 4096,
+    "fallback_to_gemini": true,
+    "fallback_model": "gemini-2.5-flash"
+  }
 }
