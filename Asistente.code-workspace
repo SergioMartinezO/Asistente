@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"D:\\IA\\Asistente\\venv\\Scripts\\python.exe": true
+		}
+	}
+}
