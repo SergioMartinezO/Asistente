@@ -29,6 +29,8 @@ from actions.engineering_deliverables_ext import (
     generate_uml_sequence_diagram,
     generate_uml_usecase_diagram,
     build_final_report_section,
+    generate_gantt_chart,
+    generate_device_prototype_image,
 )
 
 
@@ -130,10 +132,112 @@ def _log(player, message: str):
         player.write_log(message)
 
 
+def _is_lock_error(exc: BaseException) -> bool:
+    """PermissionError / WinError 32 (archivo en uso) son casi siempre un
+    archivo abierto en otro programa (Word, el navegador, un editor), no un
+    problema real de permisos del sistema de archivos."""
+    if isinstance(exc, PermissionError):
+        return True
+    return isinstance(exc, OSError) and getattr(exc, "winerror", None) == 32
+
+
+def _safe_mkdir(path: Path, player=None, retries: int = 3, delay: float = 0.6) -> None:
+    """Crea un directorio con reintentos ante bloqueos/errores transitorios
+    (antivirus, sincronización de OneDrive, etc.) en vez de fallar al primer intento."""
+    import time
+    last_err: Optional[Exception] = None
+    for attempt in range(retries):
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            return
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1:
+                time.sleep(delay)
+    if last_err:
+        _log(player, f"WARN: No se pudo crear la carpeta {path}: {last_err}")
+        raise last_err
+
+
+def _safe_save_docx(doc, output_docx: Path, player=None) -> Path:
+    """Guarda el documento Word con reintentos y, si el archivo sigue
+    bloqueado (p. ej. abierto en Microsoft Word), cae automáticamente a un
+    nombre alterno en la misma carpeta en vez de fallar todo el entregable.
+    Devuelve la ruta donde realmente quedó guardado."""
+    import time
+    last_err: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            doc.save(str(output_docx))
+            return output_docx
+        except Exception as e:
+            last_err = e
+            if _is_lock_error(e) and attempt < 2:
+                time.sleep(0.8)
+                continue
+            break
+
+    if last_err and _is_lock_error(last_err):
+        _log(player, f"WARN: {output_docx.name} está abierto en otro programa (p. ej. Word). "
+                      "Reintentando con un nombre alterno...")
+        alt = output_docx.with_name(f"{output_docx.stem}_nuevo{output_docx.suffix}")
+        try:
+            doc.save(str(alt))
+            _log(player, f"ACT: Documento Word guardado como {alt.name} (el nombre original seguía bloqueado).")
+            return alt
+        except Exception as e2:
+            last_err = e2
+
+    if last_err:
+        _log(player, f"WARN: No se pudo guardar el documento Word — {last_err}. "
+                      "Si el archivo está abierto en Word u otro programa, ciérralo e inténtalo de nuevo.")
+        raise last_err
+    return output_docx
+
+
+def _safe_write_text(path: Path, content: str, player=None, retries: int = 3, delay: float = 0.6) -> Path:
+    """Escribe texto (HTML, .py, .ino, .txt) con reintentos ante bloqueos
+    transitorios; si el archivo sigue bloqueado, cae a un nombre alterno en
+    la misma carpeta para que el entregable no se pierda por completo."""
+    import time
+    last_err: Optional[Exception] = None
+    for attempt in range(retries):
+        try:
+            path.write_text(content, encoding="utf-8")
+            return path
+        except Exception as e:
+            last_err = e
+            if _is_lock_error(e) and attempt < retries - 1:
+                time.sleep(delay)
+                continue
+            break
+
+    if last_err and _is_lock_error(last_err):
+        alt = path.with_name(f"{path.stem}_nuevo{path.suffix}")
+        try:
+            alt.write_text(content, encoding="utf-8")
+            _log(player, f"WARN: {path.name} estaba abierto en otro programa. "
+                          f"Se guardó como {alt.name} en su lugar.")
+            return alt
+        except Exception as e2:
+            last_err = e2
+
+    if last_err:
+        _log(player, f"WARN: No se pudo escribir {path.name} — {last_err}. "
+                      "Si el archivo está abierto en otro programa, ciérralo e inténtalo de nuevo.")
+        raise last_err
+    return path
+
+
 def _phase_start(player, phase: str, lines: List[str], speak=None, progress: int = 0):
+    # Nota: este marcador solo va al log de la UI (_log), no se agrega a
+    # `lines` — `lines` es lo que vuelve como resultado de la herramienta a
+    # Gemini, y debe mantenerse corto (la API Live de voz tiene un límite de
+    # tamaño de respuesta de función mucho más chico que el modo texto; un
+    # resultado enorme se trunca y Gemini puede terminar sin ver el estado
+    # final real OK/FALLÓ, e inventando una confirmación genérica).
     msg = f"[FASE] ▶ INICIO: {phase}"
     _log(player, msg)
-    lines.append(msg)
     if player and hasattr(player, "update_activity"):
         try:
             player.update_activity(estado="En proceso", progreso=progress,
@@ -152,7 +256,6 @@ def _phase_start(player, phase: str, lines: List[str], speak=None, progress: int
 def _phase_end(player, phase: str, lines: List[str], speak=None, progress: int = 0):
     msg = f"[FASE] ✅ FIN: {phase}"
     _log(player, msg)
-    lines.append(msg)
     if player and hasattr(player, "update_activity"):
         try:
             player.update_activity(estado="En proceso", progreso=progress,
@@ -774,7 +877,7 @@ def _project_plan_to_docx_table(doc, project_plan: List[Dict[str, Any]], softwar
 def _build_plan_table_html(plan: List[Dict[str, Any]]) -> str:
     rows = []
     for i, p in enumerate(plan, start=1):
-        entregables = "<ul>" + "".join(f"<li>{html.escape(x)}</li>" for x in p.get("deliverables", [])) + "</ul>"
+        entregables = "<ol>" + "".join(f"<li>{html.escape(x)}</li>" for x in p.get("deliverables", [])) + "</ol>"
         rows.append(
             "<tr>"
             f"<td>{i}</td>"
@@ -786,7 +889,7 @@ def _build_plan_table_html(plan: List[Dict[str, Any]]) -> str:
             "</tr>"
         )
     return (
-        "<table class='comp-table'>"
+        "<table class='comp-table plan-table'>"
         "<thead><tr><th>#</th><th>Fase</th><th>Inicio</th><th>Fin</th><th>Duración</th><th>Entregables</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
     )
@@ -822,8 +925,12 @@ def _build_html(
     uml_uc_diagram: Optional[Path] = None,
     arduino_code: str = "",
     final_report_txt: str = "",
+    gantt_chart: Optional[Path] = None,
+    prototype_image: Optional[Path] = None,
+    docx_filename: str = "Reporte_Proyecto.docx",
+    player=None,
 ):
-    output_html.parent.mkdir(parents=True, exist_ok=True)
+    _safe_mkdir(output_html.parent, player)
 
     def _rel(p: Optional[Path]) -> Optional[str]:
         if not p or not p.exists():
@@ -846,10 +953,10 @@ def _build_html(
     plan_table = _build_plan_table_html(project_plan)
     code_html  = html.escape(source_code)
     pseudocode_html = html.escape(build_pseudocode(project_title))
-    standards_html = "<ul>" + "".join(f"<li>{html.escape(s)}</li>" for s in software_standards) + "</ul>"
+    standards_html = "<ol>" + "".join(f"<li>{html.escape(s)}</li>" for s in software_standards) + "</ol>"
     test_table = build_test_results_table_html(project_title)
     manual_html = build_user_manual_html(project_title, overview, device_names or [])
-    acceptance_criteria_html = "<ul>" + "".join(f"<li>{html.escape(c)}</li>" for c in build_acceptance_criteria(project_title)) + "</ul>"
+    acceptance_criteria_html = "<ol>" + "".join(f"<li>{html.escape(c)}</li>" for c in build_acceptance_criteria(project_title)) + "</ol>"
 
     fig31 = _fig(_rel(block_diagram),   "Diagrama de bloques",  "Figura 5.1 – Arquitectura de bloques funcionales del sistema.")
     fig32 = _fig(_rel(circuit_diagram), "Diagrama esquemático", "Figura 5.2 – Circuito esquemático detallado de la solución de ingeniería.")
@@ -865,6 +972,8 @@ def _build_html(
     fig312 = _fig(_rel(uml_seq_diagram),  "Diagrama UML Secuencia",   "Figura 5.12 – Diagrama UML de secuencia (mensajes entre componentes).")
     fig313 = _fig(_rel(signal_flow_diagram), "Flujo de señal",         "Figura 5.13 – Diagrama de flujo de señal (telecomunicaciones).")
     fig61 = _fig(_rel(test_chart),      "Gráfica de pruebas",   "Figura 6.1 – Resumen gráfico del estado de validación del sistema.")
+    fig_gantt = _fig(_rel(gantt_chart), "Diagrama de Gantt",    "Figura 2.1 – Cronograma del proyecto (diagrama de Gantt).")
+    fig_proto = _fig(_rel(prototype_image), "Prototipo del dispositivo", "Figura 1.1 – Imagen realista del prototipo del dispositivo.")
 
     page = f"""<!doctype html>
 <html lang='es'>
@@ -894,21 +1003,25 @@ def _build_html(
       padding: 28px 32px 22px;
       margin-bottom: 20px;
       box-shadow: 0 4px 20px rgba(30,64,175,.25);
+      text-align: center;
     }}
-    .site-header h1 {{ font-size: 1.9rem; font-weight: 700; margin-bottom: 14px; }}
+    .site-header h1 {{ font-size: 1.9rem; font-weight: 700; margin-bottom: 14px; text-align: center; }}
     .meta-grid {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
       gap: 10px;
+      justify-items: center;
     }}
     .meta-item {{
       background: rgba(255,255,255,.15);
       border-radius: 8px;
       padding: 8px 14px;
       font-size: 0.87rem;
+      text-align: center;
+      width: 100%;
     }}
     .meta-item strong {{ display: block; font-size: 0.72rem; text-transform: uppercase;
-                          letter-spacing: .05em; opacity: .75; margin-bottom: 2px; }}
+                          letter-spacing: .05em; opacity: .75; margin-bottom: 2px; text-align: center; }}
 
     /* ── Tarjetas de sección ──────────────────────────────── */
     .card {{
@@ -954,6 +1067,14 @@ def _build_html(
     }}
     .comp-table tr:nth-child(even) td {{ background: #f0f9ff; }}
     .comp-table tr:hover td {{ background: #e0f2fe; }}
+
+    /* ── Tabla del plan de fases: # / Fase / Inicio / Fin / Duración / Entregables centrados ──
+       La columna Entregables centra el bloque de la lista dentro de la celda; el texto de
+       cada entregable se mantiene alineado a la izquierda dentro de la lista para que se
+       pueda leer con normalidad. */
+    .plan-table th {{ text-align: center; }}
+    .plan-table td {{ text-align: center; }}
+    .plan-table ol {{ text-align: left; display: inline-block; margin: 0; padding-left: 1.2em; }}
 
     /* ── Código fuente ────────────────────────────────────── */
     pre {{
@@ -1049,6 +1170,34 @@ def _build_html(
       .site-header h1 {{ font-size: 1.3rem; }}
       .card {{ padding: 16px; }}
     }}
+
+    /* ── Tamaño carta e impresión ─────────────────────────────
+       Márgenes adecuados en los cuatro lados y disposición clara
+       al imprimir en tamaño Carta (Letter, 8.5in x 11in). ─────── */
+    @page {{
+      size: letter;
+      margin: 1in 0.85in;
+    }}
+    @media print {{
+      * {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+      body {{ background: white; font-size: 12px; }}
+      .wrap {{ max-width: 100%; margin: 0; padding: 0; }}
+      .site-header {{ box-shadow: none; border: 1px solid #cbd5e1; }}
+      .card {{
+        box-shadow: none;
+        border: 1px solid #cbd5e1;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }}
+      .card h2 {{ break-after: avoid; page-break-after: avoid; }}
+      figure {{ break-inside: avoid; page-break-inside: avoid; }}
+      figure img {{ max-width: 100%; cursor: default; box-shadow: none; }}
+      figure img.zoomed {{ transform: none; }}
+      .download-grid, footer, .dl-card {{ display: none; }}
+      details {{ break-inside: avoid; page-break-inside: avoid; }}
+      details:not([open]) summary ~ * {{ display: block; }}
+      pre {{ white-space: pre-wrap; word-break: break-word; }}
+    }}
   </style>
 </head>
 <body>
@@ -1069,12 +1218,14 @@ def _build_html(
   <section class='card'>
     <h2>1. Funcionamiento del Producto</h2>
     <p>{html.escape(overview)}</p>
+    {fig_proto}
   </section>
 
     <!-- 2. Plan del proyecto -->
     <section class='card'>
         <h2>2. Plan del Proyecto por Fases (Inicio/Fin y Entregables)</h2>
         {plan_table}
+        {fig_gantt}
     </section>
 
     <!-- 3. Hardware + componentes -->
@@ -1153,8 +1304,8 @@ def _build_html(
         <h2>8. Descargas y Entregables del Proyecto</h2>
         <p>Todos los artefactos generados están disponibles para descarga. Haz clic en cada tarjeta:</p>
         <div class='download-grid'>
-          <a class='dl-card' href='Reporte_Proyecto.docx' download>
-            <span class='dl-icon'>📄</span>Documento Word<br><small>Reporte_Proyecto.docx</small>
+          <a class='dl-card' href='{html.escape(docx_filename)}' download>
+            <span class='dl-icon'>📄</span>Documento Word<br><small>{html.escape(docx_filename)}</small>
           </a>
           <a class='dl-card' href='main_control.py' download>
             <span class='dl-icon'>🐍</span>Código Python<br><small>main_control.py</small>
@@ -1176,7 +1327,7 @@ def _build_html(
         <h2 style='color: #15803d; border-bottom: 2px solid #bbf7d0;'>9. Reporte Final y Estado de Entrega</h2>
         <span class='badge-ok'>✅ PROYECTO 100% COMPLETO</span>
         <p><strong>CONFIRMACIÓN EXPLÍCITA:</strong> Se certifica que la totalidad de las fases del proyecto han sido concluidas exitosamente:</p>
-        <ul style='margin: 10px 0 10px 20px; line-height: 2;'>
+        <ol style='margin: 10px 0 10px 20px; line-height: 2;'>
           <li>✔ Hardware: lista de componentes con justificación técnica y criterios de aceptación.</li>
           <li>✔ Software: código Python + Arduino/C++ con comentarios en español. ISO/IEC 9126.</li>
           <li>✔ Documentación técnica: algoritmos, estructuras de datos, pseudocódigo.</li>
@@ -1186,7 +1337,7 @@ def _build_html(
           <li>✔ Documento Word (.docx) con portada, secciones y diagramas embebidos.</li>
           <li>✔ Página Web (HTML/CSS/JS) con diagramas interactivos y sección de descargas.</li>
           <li>✔ Reporte Final con cronograma fase a fase y confirmación de entrega.</li>
-        </ul>
+        </ol>
         <p>El proyecto está <strong>listo para su implementación física y despliegue</strong>.</p>
         <details style='margin-top:14px;'>
           <summary style='cursor:pointer; color:#15803d; font-weight:600;'>📋 Ver cronograma detallado</summary>
@@ -1196,7 +1347,7 @@ def _build_html(
 
 </div>
 <footer>
-  Generado automáticamente por MARK XXXIX · {html.escape(institution)} · {html.escape(date_str)} · {html.escape(version)}
+  Generado automáticamente por REX · {html.escape(institution)} · {html.escape(date_str)} · {html.escape(version)}
 </footer>
 <script>
   // Zoom interactivo en diagramas: clic para ampliar / reducir
@@ -1209,7 +1360,7 @@ def _build_html(
 </body>
 </html>
 """
-    output_html.write_text(page, encoding="utf-8")
+    _safe_write_text(output_html, page, player)
 
 
 # ── Punto de entrada principal ────────────────────────────────────────────────
@@ -1231,16 +1382,17 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
     output_html   = Path(str(parameters.get("output_html")   or r"D:\IA\Asistente\Report\index.html"))
     diagram_dir   = Path(str(parameters.get("diagram_dir")   or r"D:\IA\Asistente\Report\diagramas"))
 
-    # Garantiza rutas de salida siempre disponibles.
-    output_docx.parent.mkdir(parents=True, exist_ok=True)
-    output_html.parent.mkdir(parents=True, exist_ok=True)
-    diagram_dir.mkdir(parents=True, exist_ok=True)
+    # Garantiza rutas de salida siempre disponibles (con reintentos ante
+    # bloqueos transitorios de antivirus/sincronización en vez de fallar
+    # de inmediato con un error de "sin acceso").
+    _safe_mkdir(output_docx.parent, player)
+    _safe_mkdir(output_html.parent, player)
+    _safe_mkdir(diagram_dir, player)
 
     project_plan = _build_project_plan(parameters)
     software_standards = list(parameters.get("software_standards") or _SOFTWARE_STANDARDS)
     for ln in _plan_summary_lines(project_plan):
         _log(player, ln)
-        lines.append(ln)
 
     # ── Lista de componentes ──────────────────────────────────────────────────
     components: List[Dict[str, str]] = parameters.get("components") or []
@@ -1412,6 +1564,23 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
         if not device_names:
             device_names = [project_title]
 
+        # ── Anuncio de inicio del proyecto (antes de cualquier fase) ───────────
+        inicio_msg = (
+            f"[PROYECTO] ▶ Iniciando proyecto: {project_title}. "
+            f"Se ejecutarán 6 fases: Hardware, Software, Diagramas, Word, Web y Reporte Final."
+        )
+        _log(player, inicio_msg)
+        if speak:
+            try:
+                speak(
+                    f"Iniciando el proyecto {project_title}. "
+                    "Voy a completar seis fases: hardware, software, diagramas, documento Word, "
+                    "página web y reporte final. Te aviso al comenzar y al terminar cada una."
+                )
+                import time; time.sleep(1.2)
+            except Exception:
+                pass
+
         # ── FASE 1: Hardware ──────────────────────────────────────────────────
         _phase_start(player, "Hardware", lines, speak, progress=15)
         import time; time.sleep(0.3)
@@ -1440,6 +1609,7 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
         power_png = fsm_png = sw_arch_png = comm_png = mech_png = tests_chart_png = None
         pcb_svg = pcb_png = uml_png = signal_flow_png = None
         uml_seq_png = uml_uc_png = None
+        gantt_png = prototype_png = None
         generated_device_dirs: List[Path] = []
         try:
             gv = _generate_graphviz(diagram_dir, project_title)
@@ -1468,6 +1638,9 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
                                                      _write_fallback_png, _write_fallback_svg)
             uml_uc   = generate_uml_usecase_diagram(diagram_dir, project_title,
                                                     _write_fallback_png, _write_fallback_svg)
+            gantt    = generate_gantt_chart(diagram_dir, project_title, project_plan)
+            proto    = generate_device_prototype_image(diagram_dir, project_title, overview,
+                                                        device_names, player=player)
 
             expected = _ensure_diagram_bundle(diagram_dir, project_title)
 
@@ -1487,6 +1660,8 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
             uml_seq_png     = uml_seq.get("png")
             uml_uc_png      = uml_uc.get("png")
             tests_chart_png = tch.get("png")
+            gantt_png       = gantt.get("png")
+            prototype_png   = proto.get("png")
 
             generated_count = sum(1 for p in expected.values() if p.exists())
             _log(player, f"ACT: Diagramas base generados: {generated_count}/{len(expected)}")
@@ -1722,7 +1897,7 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
                 "El proyecto está 100% completo, verificado y listo para su implementación física y despliegue."
             )
 
-            doc.save(str(output_docx))
+            output_docx = _safe_save_docx(doc, output_docx, player)
             inserted = sum(1 for f in inserted_flags if f)
             _log(player, f"ACT: Diagramas insertados en Word: {inserted}/{len(inserted_flags)}")
             word_ok = True
@@ -1785,6 +1960,10 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
                 uml_uc_diagram=_ok(uml_uc_png),
                 arduino_code=arduino_code,
                 final_report_txt=final_report_txt,
+                gantt_chart=_ok(gantt_png),
+                prototype_image=_ok(prototype_png),
+                docx_filename=output_docx.name,
+                player=player,
             )
             html_ok = True
             _log(player, f"ACT: Entregable web generado: {output_html}")
@@ -1822,20 +2001,34 @@ def engineering_report(parameters: Dict[str, Any], player=None, speak=None) -> s
             _log(player, f"WARN: No se pudo guardar reporte_final.txt: {rfe}")
         _phase_end(player, "Reporte Final", lines, speak, progress=100)
 
-        # Finalizar
+        # Finalizar — el encabezado refleja el éxito/fallo REAL (verificado
+        # con .exists() en disco), nunca una confirmación fija: si Word o
+        # Web fallaron, esto debe decir FALLÓ de forma inconfundible, no
+        # "100% completo". Este texto es lo único que recibe Gemini como
+        # resultado de la herramienta — debe ser corto y llevar el estado
+        # verificado en la primera línea, porque la API Live de voz tiene
+        # un límite de tamaño de respuesta más chico que el modo texto y
+        # puede truncar el resto.
         total_dias = sum(p["duration_days"] for p in project_plan)
+        todo_ok = word_ok and output_docx.exists() and html_ok and output_html.exists()
+        estado_linea = (
+            "✅ ÉXITO — Proyecto 100% completo y verificado en disco."
+            if todo_ok else
+            "⚠️ ATENCIÓN — El proyecto NO se completó del todo. Revisa el detalle abajo "
+            "y dile al usuario exactamente qué falló y qué sí se generó. No digas que está listo."
+        )
         final_msg = (
-            f"✅ Proyecto 100% completo y verificado.\n"
-            f"  Cronograma: {project_plan[0]['start']} → {project_plan[-1]['end']} ({total_dias} días)\n"
+            f"{estado_linea}\n"
             f"  Word      : {output_docx} [{word_status}]\n"
             f"  Web       : {output_html} [{html_status}]\n"
-            f"  Python    : {code_file}\n"
-            f"  Arduino   : {arduino_file}\n"
             f"  Diagramas : {diagram_dir}\n"
-            f"  Rep. Final: {reporte_final_file}\n"
-            f"  Dispositivos con diagramas: {len(device_names)}"
+            f"  Dispositivos con diagramas: {len(device_names)}\n"
+            f"  Cronograma (texto simbólico del documento): {project_plan[0]['start']} → "
+            f"{project_plan[-1]['end']} ({total_dias} días)"
         )
         _log(player, final_msg)
+        _log(player, f"ACT: Python: {code_file} | Arduino: {arduino_file} | "
+                      f"Rep. Final: {reporte_final_file}")
         lines.append(final_msg)
         if player and hasattr(player, "update_activity"):
             try:

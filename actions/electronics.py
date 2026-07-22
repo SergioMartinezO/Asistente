@@ -1,7 +1,19 @@
 from typing import Dict, Any, Optional, Callable
 from actions.base import BaseAction
 from core.electronics.components import ComponentOverloadError
-from core.electronics.calculations import calcular_ohm, calcular_divisor_tension
+from core.electronics.calculations import (
+    calcular_ohm,
+    calcular_divisor_tension,
+    calcular_serie,
+    calcular_paralelo,
+    calcular_reactancia_c,
+    calcular_reactancia_l,
+    calcular_frecuencia_corte,
+    convertir_dbm_mw,
+    convertir_vrms_vpp,
+    decodificar_color_resistencia,
+    convertir_prefijo_si,
+)
 
 class ElectronicsAction(BaseAction):
     """Acción puente del framework para interactuar con el motor de electrónica core/electronics/."""
@@ -74,6 +86,88 @@ class ElectronicsAction(BaseAction):
                 )
                 say(result)
                 return result
+
+            elif action == "serie":
+                values = [float(v) for v in (parameters.get("values") or [])]
+                res = calcular_serie(values)
+                result = f"Resistencia equivalente en serie = {res['equivalente']:.2f} Ω ({res['n']} resistencias)"
+                say(result)
+                return result
+
+            elif action == "paralelo":
+                values = [float(v) for v in (parameters.get("values") or [])]
+                res = calcular_paralelo(values)
+                result = f"Resistencia equivalente en paralelo = {res['equivalente']:.2f} Ω ({res['n']} resistencias)"
+                say(result)
+                return result
+
+            elif action == "reactancia_c":
+                f = float(parameters.get("frequency"))
+                c = float(parameters.get("capacitance"))
+                res = calcular_reactancia_c(f, c)
+                result = f"Reactancia capacitiva Xc = {res['reactancia']:.4f} Ω"
+                say(result)
+                return result
+
+            elif action == "reactancia_l":
+                f = float(parameters.get("frequency"))
+                l = float(parameters.get("inductance"))
+                res = calcular_reactancia_l(f, l)
+                result = f"Reactancia inductiva Xl = {res['reactancia']:.4f} Ω"
+                say(result)
+                return result
+
+            elif action == "frecuencia_corte":
+                r = float(parameters.get("resistance"))
+                c = parameters.get("capacitance")
+                l = parameters.get("inductance")
+                res = calcular_frecuencia_corte(
+                    r,
+                    float(c) if c is not None else None,
+                    float(l) if l is not None else None,
+                )
+                result = f"Frecuencia de corte ({res['circuito']}) = {res['frecuencia_corte']:.4f} Hz"
+                say(result)
+                return result
+
+            elif action == "dbm_mw":
+                dbm = parameters.get("dbm")
+                mw = parameters.get("mw")
+                res = convertir_dbm_mw(
+                    float(dbm) if dbm is not None else None,
+                    float(mw) if mw is not None else None,
+                )
+                result = f"{res['dbm']:.4f} dBm = {res['mw']:.6f} mW"
+                say(result)
+                return result
+
+            elif action == "vrms_vpp":
+                vrms = parameters.get("vrms")
+                vpp = parameters.get("vpp")
+                res = convertir_vrms_vpp(
+                    float(vrms) if vrms is not None else None,
+                    float(vpp) if vpp is not None else None,
+                )
+                result = f"Vrms = {res['vrms']:.4f} V | Vpp = {res['vpp']:.4f} V"
+                say(result)
+                return result
+
+            elif action == "codigo_colores":
+                bands = parameters.get("bands") or []
+                res = decodificar_color_resistencia(bands)
+                result = f"Valor = {res['valor']:.0f} Ω | Tolerancia = ±{res['tolerancia_pct']:.2f}%"
+                say(result)
+                return result
+
+            elif action == "prefijo_si":
+                value = float(parameters.get("value"))
+                from_prefix = parameters.get("from_prefix", "base")
+                to_prefix = parameters.get("to_prefix", "base")
+                res = convertir_prefijo_si(value, from_prefix, to_prefix)
+                result = f"{value} {from_prefix} = {res['resultado']:g} {to_prefix}"
+                say(result)
+                return result
+
             else:
                 return f"Acción '{action}' no soportada."
 

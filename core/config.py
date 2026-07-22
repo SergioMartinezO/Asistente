@@ -131,7 +131,8 @@ def load_config() -> dict:
     try:
         _config_cache = json.loads(API_FILE.read_text(encoding="utf-8"))
         return _config_cache
-    except Exception:
+    except Exception as e:
+        print(f"[Config] ⚠️ No se pudo leer {API_FILE.name}: {e}")
         return {}
 
 def save_config(api_key: str, os_name: str):

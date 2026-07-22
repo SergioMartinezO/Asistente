@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from datetime import datetime, timedelta
 import html
 
 
@@ -336,11 +337,15 @@ graph mecanico {
 def generate_pcb_layout_sketch(diagram_dir: Path, project_title: str,
                                 components: Optional[List[Dict[str, str]]] = None) -> Dict[str, Optional[Path]]:
     """
-    Genera un boceto SVG de disposición de componentes tipo PCB (footprint
-    aproximado + rutas rectilíneas simplificadas). No es un ruteo real:
-    para producción, el esquemático generado (diagrama_circuito_graphviz)
-    debe importarse a una herramienta EDA (KiCad, Proteus ARES, Altium)
-    donde se realice el ruteo de pistas y la verificación DRC.
+    Genera un boceto de disposición de componentes tipo PCB (footprint
+    aproximado + rutas rectilíneas simplificadas), en SVG y PNG dibujados
+    de forma nativa (SVG a mano + PNG con PIL) — sin depender de cairosvg
+    (no instalado en este entorno) ni de ningún servicio externo, para que
+    el diagrama real siempre esté disponible en el entregable. No es un
+    ruteo real: para producción, el esquemático generado
+    (diagrama_circuito_graphviz) debe importarse a una herramienta EDA
+    (KiCad, Proteus ARES, Altium) donde se realice el ruteo de pistas y la
+    verificación DRC.
     """
     diagram_dir.mkdir(parents=True, exist_ok=True)
     svg_path = diagram_dir / "boceto_pcb_layout.svg"
@@ -359,42 +364,46 @@ def generate_pcb_layout_sketch(diagram_dir: Path, project_title: str,
     rows = (len(names) + cols - 1) // cols
     cell_h = (board_h - 2 * margin) // max(rows, 1)
 
-    footprints = []
-    centers = []
+    footprints = []  # (x, y, w, h, cx, cy, label)
     for i, name in enumerate(names):
         r, c = divmod(i, cols)
         x = margin + c * cell_w + 10
         y = margin + r * cell_h + 10
         w = cell_w - 20
         h = cell_h - 20
-        cx, cy = x + w / 2, y + h / 2
-        centers.append((cx, cy))
-        footprints.append(
-            f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4" '
-            f'fill="#fde68a" stroke="#92400e" stroke-width="1.5"/>'
-            f'<text x="{cx}" y="{cy}" font-size="11" text-anchor="middle" '
-            f'dominant-baseline="middle" font-family="Helvetica">{html.escape(str(name))[:16]}</text>'
-        )
+        footprints.append((x, y, w, h, x + w / 2, y + h / 2, str(name)[:16]))
 
     # Trazas simplificadas: conecta cada footprint con el siguiente (bus lineal).
-    traces = []
-    for i in range(len(centers) - 1):
-        x1, y1 = centers[i]
-        x2, y2 = centers[i + 1]
-        traces.append(
-            f'<path d="M{x1},{y1} L{x1},{(y1+y2)/2} L{x2},{(y1+y2)/2} L{x2},{y2}" '
-            f'fill="none" stroke="#b45309" stroke-width="2"/>'
-        )
+    traces = []  # (x1, y1, xm, y2, x2)  — ruta en escuadra: baja/sube al medio y cruza
+    for i in range(len(footprints) - 1):
+        x1, y1 = footprints[i][4], footprints[i][5]
+        x2, y2 = footprints[i + 1][4], footprints[i + 1][5]
+        traces.append((x1, y1, x2, y2))
 
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {board_w} {board_h+60}" font-family="Helvetica">
-  <rect x="0" y="0" width="{board_w}" height="{board_h+60}" fill="white"/>
+    total_h = board_h + 60
+
+    # ── SVG ──
+    fp_svg = "".join(
+        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4" '
+        f'fill="#fde68a" stroke="#92400e" stroke-width="1.5"/>'
+        f'<text x="{cx}" y="{cy}" font-size="11" text-anchor="middle" '
+        f'dominant-baseline="middle" font-family="Helvetica">{html.escape(label)}</text>'
+        for x, y, w, h, cx, cy, label in footprints
+    )
+    tr_svg = "".join(
+        f'<path d="M{x1},{y1} L{x1},{(y1+y2)/2} L{x2},{(y1+y2)/2} L{x2},{y2}" '
+        f'fill="none" stroke="#b45309" stroke-width="2"/>'
+        for x1, y1, x2, y2 in traces
+    )
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {board_w} {total_h}" font-family="Helvetica">
+  <rect x="0" y="0" width="{board_w}" height="{total_h}" fill="white"/>
   <text x="{board_w/2}" y="24" font-size="15" font-weight="bold" text-anchor="middle">
     Boceto de Disposición de PCB — {html.escape(project_title)}
   </text>
   <rect x="10" y="40" width="{board_w-20}" height="{board_h-20}" rx="6"
         fill="#166534" fill-opacity="0.08" stroke="#166534" stroke-width="2"/>
-  {''.join(footprints)}
-  {''.join(traces)}
+  {fp_svg}
+  {tr_svg}
   <text x="{board_w/2}" y="{board_h+40}" font-size="10" fill="#64748b" text-anchor="middle">
     Croquis conceptual de posición de componentes y trazas — NO apto para fabricación.
     Ruteo real debe hacerse en KiCad / Proteus ARES a partir del esquemático.
@@ -402,8 +411,43 @@ def generate_pcb_layout_sketch(diagram_dir: Path, project_title: str,
 </svg>"""
     svg_path.write_text(svg, encoding="utf-8")
 
-    # Para Word se necesita PNG: garantizar artefacto aunque falten dependencias.
-    _ensure_png_from_svg_or_placeholder(svg_path, png_path, f"PCB layout conceptual – {project_title}")
+    # ── PNG nativo (mismo layout, dibujado con PIL — sin cairosvg) ──
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        scale = 2.0
+        img = Image.new("RGB", (int(board_w * scale), int(total_h * scale)), "white")
+        draw = ImageDraw.Draw(img)
+        try:
+            font_title = ImageFont.truetype("segoeuib.ttf", int(15 * scale))
+            font_label = ImageFont.truetype("segoeui.ttf", int(11 * scale))
+            font_small = ImageFont.truetype("segoeui.ttf", int(9 * scale))
+        except Exception:
+            font_title = font_label = font_small = ImageFont.load_default()
+
+        draw.text((board_w * scale / 2, 24 * scale), f"Boceto de Disposición de PCB — {project_title}",
+                   fill="#0f172a", font=font_title, anchor="mm")
+        draw.rounded_rectangle(
+            [10 * scale, 40 * scale, (board_w - 10) * scale, (board_h + 20) * scale],
+            radius=6 * scale, outline="#166534", width=int(2 * scale), fill="#eaf6ee"
+        )
+        for x1, y1, x2, y2 in traces:
+            ym = (y1 + y2) / 2
+            draw.line([(x1 * scale, y1 * scale), (x1 * scale, ym * scale),
+                       (x2 * scale, ym * scale), (x2 * scale, y2 * scale)],
+                      fill="#b45309", width=int(2 * scale))
+        for x, y, w, h, cx, cy, label in footprints:
+            draw.rounded_rectangle(
+                [x * scale, y * scale, (x + w) * scale, (y + h) * scale],
+                radius=4 * scale, fill="#fde68a", outline="#92400e", width=int(1.5 * scale)
+            )
+            draw.text((cx * scale, cy * scale), label, fill="#1e293b", font=font_label, anchor="mm")
+        draw.text((board_w * scale / 2, (board_h + 40) * scale),
+                   "Croquis conceptual — NO apto para fabricación. Ruteo real en KiCad / Proteus ARES.",
+                   fill="#64748b", font=font_small, anchor="mm")
+        img.save(png_path)
+    except Exception:
+        # Último recurso: intentar convertir el SVG ya escrito, o placeholder genérico.
+        _ensure_png_from_svg_or_placeholder(svg_path, png_path, f"PCB layout conceptual – {project_title}")
 
     return {"svg": svg_path if svg_path.exists() else None,
             "png": png_path if png_path.exists() else None}
@@ -817,77 +861,213 @@ def build_arduino_source(project_title: str) -> str:
 
 
 # ── Diagrama UML de Secuencia ─────────────────────────────────────────────────
-def generate_uml_sequence_diagram(
-    diagram_dir: Path,
-    project_title: str,
-    write_fallback_png,
-    write_fallback_svg,
-) -> Dict[str, Optional[Path]]:
-    """Genera diagrama UML de secuencia mediante Kroki/Mermaid."""
-    png = diagram_dir / "diagrama_uml_secuencia.png"
-    svg = diagram_dir / "diagrama_uml_secuencia.svg"
+def _seq_layout(participants: List[tuple], events: List[tuple]) -> Dict[str, Any]:
+    """Calcula la geometría del diagrama de secuencia (participantes, filas
+    de mensajes, marcos loop/alt con su 'else') de forma independiente del
+    motor de dibujo, para que el SVG y el PNG (PIL) queden idénticos."""
+    lane_w, left_pad, top_pad, row_h, frame_pad = 150, 90, 90, 42, 14
+    lane_x = {pid: left_pad + i * lane_w for i, (pid, _) in enumerate(participants)}
+    width = left_pad + len(participants) * lane_w
 
-    mermaid_src = f"""\
-sequenceDiagram
-    autonumber
-    participant U  as Usuario
-    participant SW as Software Control
-    participant MCU as ESP32 MCU
-    participant SEN as Sensor
-    participant ACT as Actuador
+    rows: List[tuple] = []
+    frames: List[tuple] = []
+    stack: List[Dict[str, Any]] = []
 
-    U ->> SW: Iniciar sistema
-    SW ->> MCU: setup() — configurar pines y serial
-    MCU -->> SW: Hardware listo
+    y = top_pad
+    for ev in events:
+        kind = ev[0]
+        if kind == "frame_start":
+            _, fkind, label = ev
+            y += frame_pad
+            stack.append({"kind": fkind, "label": label, "y_top": y, "else": []})
+            y += row_h * 0.9
+        elif kind == "frame_else":
+            _, label = ev
+            y += frame_pad * 0.4
+            stack[-1]["else"].append((y, label))
+            y += row_h * 0.7
+        elif kind == "frame_end":
+            f = stack.pop()
+            y += frame_pad * 0.6
+            frames.append((f["kind"], f["label"], f["y_top"], y, f["else"]))
+            y += frame_pad
+        elif kind == "msg":
+            _, style, src, dst, label = ev
+            rows.append((style, src, dst, label, y))
+            y += row_h
 
-    loop Cada PERIODO_MS (500 ms)
-        SW ->> MCU: loop() — leer sensor
-        MCU ->> SEN: analogRead(PIN_SENSOR)
-        SEN -->> MCU: Valor ADC 0–4095
-        MCU -->> SW: valor % normalizado
+    return {
+        "lane_x": lane_x, "width": width, "height": y + 30,
+        "rows": rows, "frames": frames, "participants": participants,
+    }
 
-        alt valor >= UMBRAL_ALTO y actuador apagado
-            SW ->> MCU: controlarActuador(true)
-            MCU ->> ACT: digitalWrite(PIN_ACTUADOR, HIGH)
-            ACT -->> MCU: ACK (actuador ON)
-            SW ->> SW: registrarEvento(INFO, ACTIVADO)
-        else valor <= UMBRAL_BAJO y actuador encendido
-            SW ->> MCU: controlarActuador(false)
-            MCU ->> ACT: digitalWrite(PIN_ACTUADOR, LOW)
-            ACT -->> MCU: ACK (actuador OFF)
-            SW ->> SW: registrarEvento(INFO, DESACTIVADO)
-        end
 
-        SW ->> MCU: LED debug blink
-        MCU -->> U: Serial.println(evento)
-    end
+def _write_seq_svg(svg_path: Path, project_title: str, L: Dict[str, Any]) -> None:
+    lane_x, width, height = L["lane_x"], L["width"], L["height"]
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" font-family="Helvetica">',
+        f'<rect width="{width}" height="{height}" fill="white"/>',
+        f'<text x="{width/2}" y="24" font-size="15" font-weight="bold" text-anchor="middle">'
+        f'Diagrama UML de Secuencia — {html.escape(project_title)}</text>',
+    ]
+    for kind, label, y0, y1, elses in L["frames"]:
+        x0, x1 = min(lane_x.values()) - 65, max(lane_x.values()) + 65
+        parts.append(f'<rect x="{x0}" y="{y0}" width="{x1-x0}" height="{y1-y0}" fill="none" '
+                      f'stroke="#7c3aed" stroke-width="1.3" stroke-dasharray="3,2"/>')
+        parts.append(f'<path d="M{x0},{y0} h56 v14 l-8,8 h-48 z" fill="#ede9fe" stroke="#7c3aed"/>')
+        parts.append(f'<text x="{x0+8}" y="{y0+13}" font-size="10" font-weight="bold" '
+                      f'fill="#5b21b6">{html.escape(kind.upper())}</text>')
+        parts.append(f'<text x="{x0+62}" y="{y0+13}" font-size="9.5" fill="#4c1d95">{html.escape(label)}</text>')
+        for ey, elabel in elses:
+            parts.append(f'<line x1="{x0}" y1="{ey}" x2="{x1}" y2="{ey}" stroke="#7c3aed" '
+                          f'stroke-width="1" stroke-dasharray="3,2"/>')
+            parts.append(f'<text x="{x0+8}" y="{ey+11}" font-size="9.5" font-weight="bold" '
+                          f'fill="#5b21b6">[else] {html.escape(elabel)}</text>')
+    for pid, label in L["participants"]:
+        x = lane_x[pid]
+        parts.append(f'<rect x="{x-55}" y="40" width="110" height="30" rx="5" fill="#dbeafe" stroke="#2563eb"/>')
+        for j, line in enumerate(label.split("\n")):
+            parts.append(f'<text x="{x}" y="{56+j*12}" font-size="10.5" text-anchor="middle" '
+                          f'font-weight="600">{html.escape(line)}</text>')
+        parts.append(f'<line x1="{x}" y1="70" x2="{x}" y2="{height-15}" stroke="#94a3b8" '
+                      f'stroke-width="1.4" stroke-dasharray="4,3"/>')
+    for style, src, dst, label, y in L["rows"]:
+        x1, x2 = lane_x[src], lane_x[dst]
+        if style == "self":
+            parts.append(f'<path d="M{x1},{y} h34 v16 h-34" fill="none" stroke="#1e293b" stroke-width="1.3"/>')
+            parts.append(f'<polygon points="{x1+5},{y+16} {x1+13},{y+12} {x1+13},{y+20}" fill="#1e293b"/>')
+            parts.append(f'<text x="{x1+38}" y="{y+10}" font-size="9.5" fill="#1e293b">{html.escape(label)}</text>')
+        else:
+            dash = ' stroke-dasharray="5,3"' if style == "ret" else ""
+            direction = 1 if x2 >= x1 else -1
+            parts.append(f'<line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" stroke="#1e293b" stroke-width="1.3"{dash}/>')
+            ax = x2 - direction * 9
+            parts.append(f'<polygon points="{x2},{y} {ax},{y-4} {ax},{y+4}" fill="#1e293b"/>')
+            parts.append(f'<text x="{(x1+x2)/2}" y="{y-6}" font-size="9.5" text-anchor="middle" '
+                          f'fill="#1e293b">{html.escape(label)}</text>')
+    parts.append("</svg>")
+    svg_path.write_text("\n".join(parts), encoding="utf-8")
 
-    U ->> SW: Interrumpir (CTRL+C / Reset)
-    SW ->> MCU: controlarActuador(false) — seguridad
-    MCU ->> ACT: apagar actuador
-    SW -->> U: Sistema detenido
-""".strip()
 
+def _write_seq_png(png_path: Path, project_title: str, L: Dict[str, Any]) -> None:
     try:
-        import requests
-        for fmt, out in (("svg", svg), ("png", png)):
-            r = requests.post(
-                f"https://kroki.io/mermaid/{fmt}",
-                data=mermaid_src.encode("utf-8"),
-                headers={"Content-Type": "text/plain; charset=utf-8"},
-                timeout=25,
-            )
-            if r.status_code == 200 and r.content:
-                out.write_bytes(r.content)
+        from PIL import Image, ImageDraw, ImageFont
+        scale = 1.8
+        lane_x, width, height = L["lane_x"], L["width"], L["height"]
+        img = Image.new("RGB", (int(width * scale), int(height * scale)), "white")
+        draw = ImageDraw.Draw(img)
+        try:
+            f_title = ImageFont.truetype("segoeuib.ttf", int(15 * scale))
+            f_bold = ImageFont.truetype("segoeuib.ttf", int(10.5 * scale))
+            f_small = ImageFont.truetype("segoeui.ttf", int(9.5 * scale))
+        except Exception:
+            f_title = f_bold = f_small = ImageFont.load_default()
+
+        draw.text((width * scale / 2, 24 * scale), f"Diagrama UML de Secuencia — {project_title}",
+                   fill="#0f172a", font=f_title, anchor="mm")
+
+        for kind, label, y0, y1, elses in L["frames"]:
+            x0 = (min(lane_x.values()) - 65) * scale
+            x1 = (max(lane_x.values()) + 65) * scale
+            draw.rectangle([x0, y0 * scale, x1, y1 * scale], outline="#7c3aed", width=max(1, int(1.2 * scale)))
+            draw.text((x0 + 8 * scale, (y0 + 8) * scale), kind.upper(), fill="#5b21b6", font=f_small, anchor="lm")
+            draw.text((x0 + 62 * scale, (y0 + 8) * scale), label, fill="#4c1d95", font=f_small, anchor="lm")
+            for ey, elabel in elses:
+                draw.line([(x0, ey * scale), (x1, ey * scale)], fill="#7c3aed", width=max(1, int(scale)))
+                draw.text((x0 + 8 * scale, (ey + 6) * scale), f"[else] {elabel}",
+                          fill="#5b21b6", font=f_small, anchor="lm")
+
+        for pid, label in L["participants"]:
+            x = lane_x[pid] * scale
+            draw.rounded_rectangle([x - 55 * scale, 40 * scale, x + 55 * scale, 70 * scale],
+                                    radius=5 * scale, fill="#dbeafe", outline="#2563eb",
+                                    width=max(1, int(1.4 * scale)))
+            for j, line in enumerate(label.split("\n")):
+                draw.text((x, (56 + j * 12) * scale), line, fill="#1e293b", font=f_bold, anchor="mm")
+            draw.line([(x, 70 * scale), (x, (height - 15) * scale)], fill="#94a3b8", width=max(1, int(1.2 * scale)))
+
+        for style, src, dst, label, y in L["rows"]:
+            x1p, x2p, ys = lane_x[src] * scale, lane_x[dst] * scale, y * scale
+            if style == "self":
+                draw.line([(x1p, ys), (x1p + 34 * scale, ys), (x1p + 34 * scale, ys + 16 * scale),
+                           (x1p, ys + 16 * scale)], fill="#1e293b", width=max(1, int(1.3 * scale)))
+                draw.polygon([(x1p + 5 * scale, ys + 16 * scale), (x1p + 13 * scale, ys + 12 * scale),
+                              (x1p + 13 * scale, ys + 20 * scale)], fill="#1e293b")
+                draw.text((x1p + 38 * scale, ys + 8 * scale), label, fill="#1e293b", font=f_small, anchor="lm")
+            else:
+                direction = 1 if x2p >= x1p else -1
+                draw.line([(x1p, ys), (x2p, ys)], fill="#1e293b", width=max(1, int(1.3 * scale)))
+                ax = x2p - direction * 9 * scale
+                draw.polygon([(x2p, ys), (ax, ys - 4 * scale), (ax, ys + 4 * scale)], fill="#1e293b")
+                draw.text(((x1p + x2p) / 2, ys - 8 * scale), label, fill="#1e293b", font=f_small, anchor="mm")
+
+        img.save(png_path)
     except Exception:
         pass
 
-    if not svg.exists() or svg.stat().st_size < 200:
-        write_fallback_svg(svg, f"UML Secuencia – {project_title}")
-    if not png.exists() or png.stat().st_size < 500:
-        write_fallback_png(png, f"UML Secuencia – {project_title}")
 
-    return {"png": png if png.exists() else None, "svg": svg if svg.exists() else None}
+def generate_uml_sequence_diagram(
+    diagram_dir: Path,
+    project_title: str,
+    write_fallback_png=None,
+    write_fallback_svg=None,
+) -> Dict[str, Optional[Path]]:
+    """Genera el diagrama UML de secuencia (participantes, mensajes
+    síncronos/de retorno, marcos loop/alt) de forma 100% local — dibujado a
+    mano en SVG y en PNG con PIL — sin depender de Mermaid/kroki.io ni de
+    conexión a internet, para que el diagrama real esté siempre disponible
+    en el entregable sin importar la conectividad del equipo."""
+    diagram_dir.mkdir(parents=True, exist_ok=True)
+    svg_path = diagram_dir / "diagrama_uml_secuencia.svg"
+    png_path = diagram_dir / "diagrama_uml_secuencia.png"
+
+    participants = [
+        ("U", "Usuario"), ("SW", "Software\nControl"), ("MCU", "ESP32\nMCU"),
+        ("SEN", "Sensor"), ("ACT", "Actuador"),
+    ]
+    events = [
+        ("msg", "sync", "U", "SW", "Iniciar sistema"),
+        ("msg", "sync", "SW", "MCU", "setup(): configurar pines y serial"),
+        ("msg", "ret", "MCU", "SW", "Hardware listo"),
+        ("frame_start", "loop", "Cada PERIODO_MS (500 ms)"),
+        ("msg", "sync", "SW", "MCU", "loop(): leer sensor"),
+        ("msg", "sync", "MCU", "SEN", "analogRead(PIN_SENSOR)"),
+        ("msg", "ret", "SEN", "MCU", "Valor ADC 0-4095"),
+        ("msg", "ret", "MCU", "SW", "valor % normalizado"),
+        ("frame_start", "alt", "valor >= UMBRAL_ALTO y actuador apagado"),
+        ("msg", "sync", "SW", "MCU", "controlarActuador(true)"),
+        ("msg", "sync", "MCU", "ACT", "digitalWrite(PIN_ACTUADOR, HIGH)"),
+        ("msg", "ret", "ACT", "MCU", "ACK (actuador ON)"),
+        ("msg", "self", "SW", "SW", "registrarEvento(INFO, ACTIVADO)"),
+        ("frame_else", "valor <= UMBRAL_BAJO y actuador encendido"),
+        ("msg", "sync", "SW", "MCU", "controlarActuador(false)"),
+        ("msg", "sync", "MCU", "ACT", "digitalWrite(PIN_ACTUADOR, LOW)"),
+        ("msg", "ret", "ACT", "MCU", "ACK (actuador OFF)"),
+        ("msg", "self", "SW", "SW", "registrarEvento(INFO, DESACTIVADO)"),
+        ("frame_end",),
+        ("msg", "sync", "SW", "MCU", "LED debug blink"),
+        ("msg", "ret", "MCU", "U", "Serial.println(evento)"),
+        ("frame_end",),
+        ("msg", "sync", "U", "SW", "Interrumpir (Ctrl+C / Reset)"),
+        ("msg", "sync", "SW", "MCU", "controlarActuador(false) - seguridad"),
+        ("msg", "sync", "MCU", "ACT", "apagar actuador"),
+        ("msg", "ret", "SW", "U", "Sistema detenido"),
+    ]
+
+    try:
+        layout = _seq_layout(participants, events)
+        _write_seq_svg(svg_path, project_title, layout)
+        _write_seq_png(png_path, project_title, layout)
+    except Exception:
+        pass
+
+    if (not svg_path.exists() or svg_path.stat().st_size < 200) and write_fallback_svg:
+        write_fallback_svg(svg_path, f"UML Secuencia – {project_title}")
+    if (not png_path.exists() or png_path.stat().st_size < 500) and write_fallback_png:
+        write_fallback_png(png_path, f"UML Secuencia – {project_title}")
+
+    return {"png": png_path if png_path.exists() else None,
+            "svg": svg_path if svg_path.exists() else None}
 
 
 # ── Diagrama UML de Casos de Uso ──────────────────────────────────────────────
@@ -1043,3 +1223,255 @@ def build_final_report_section(
         "=" * 70,
     ]
     return "\n".join(lineas)
+
+
+# ── Diagrama de Gantt del cronograma ──────────────────────────────────────────
+_GANTT_PHASE_COLORS: Dict[str, tuple] = {
+    "Hardware":      ("#16a34a", "#dcfce7"),
+    "Software":      ("#2563eb", "#dbeafe"),
+    "Diagramas":     ("#7c3aed", "#ede9fe"),
+    "Word":          ("#0891b2", "#cffafe"),
+    "Web":           ("#ea580c", "#ffedd5"),
+    "Reporte Final": ("#dc2626", "#fee2e2"),
+}
+_GANTT_DEFAULT_COLOR = ("#475569", "#e2e8f0")
+
+
+def _gantt_layout(project_plan: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Calcula la geometría del Gantt (independiente del motor de dibujo) para
+    que el renderer SVG y el renderer PNG (PIL) produzcan exactamente el
+    mismo diagrama sin depender de librerías externas ni de internet."""
+    if not project_plan:
+        return None
+
+    starts = [datetime.strptime(p["start"], "%Y-%m-%d") for p in project_plan]
+    ends = [datetime.strptime(p["end"], "%Y-%m-%d") for p in project_plan]
+    min_start, max_end = min(starts), max(ends)
+    total_days = max(1, (max_end - min_start).days + 1)
+
+    label_w, chart_w, right_pad = 210, 700, 170
+    row_h, header_h, margin = 40, 44, 22
+    n = len(project_plan)
+    width = label_w + chart_w + margin * 2 + right_pad
+    height = header_h + n * row_h + margin * 2
+    day_w = chart_w / total_days
+
+    def x_for(d: datetime) -> float:
+        return label_w + margin + (d - min_start).days * day_w
+
+    weeks = []
+    d = min_start
+    while d <= max_end:
+        weeks.append((x_for(d), d.strftime("%d/%m")))
+        d = d + timedelta(days=7)
+
+    bars = []
+    for i, p in enumerate(project_plan):
+        start_d = datetime.strptime(p["start"], "%Y-%m-%d")
+        end_d = datetime.strptime(p["end"], "%Y-%m-%d")
+        stroke, fill = _GANTT_PHASE_COLORS.get(p.get("phase", ""), _GANTT_DEFAULT_COLOR)
+        bar_w = max(8.0, (end_d - start_d).days * day_w + day_w * 0.9)
+        range_text = f"{p.get('start','')} → {p.get('end','')} ({p.get('duration_days','')} d)"
+        # Si el texto no cabe dentro de la barra (aprox. 4.6px por carácter a
+        # tamaño 9), se dibuja a la derecha en vez de encimarse con el borde.
+        fits_inside = bar_w - 12 >= len(range_text) * 4.6
+        bars.append({
+            "y": header_h + margin + i * row_h,
+            "x1": x_for(start_d),
+            "w": bar_w,
+            "label": f"{i+1}. {p.get('phase', '')}",
+            "range": range_text,
+            "range_inside": fits_inside,
+            "stroke": stroke,
+            "fill": fill,
+        })
+
+    return {
+        "width": width, "height": height, "label_w": label_w, "margin": margin,
+        "header_h": header_h, "row_h": row_h, "weeks": weeks, "bars": bars,
+    }
+
+
+def generate_gantt_chart(
+    diagram_dir: Path,
+    project_title: str,
+    project_plan: List[Dict[str, Any]],
+) -> Dict[str, Optional[Path]]:
+    """Genera el diagrama de Gantt del cronograma (SVG + PNG) de forma
+    100% local, sin librerías de terceros ni servicios externos (no
+    depende de graphviz/kroki/cairosvg), para que el diagrama nunca falte
+    en el entregable sin importar la conectividad del equipo."""
+    diagram_dir.mkdir(parents=True, exist_ok=True)
+    svg_path = diagram_dir / "diagrama_gantt.svg"
+    png_path = diagram_dir / "diagrama_gantt.png"
+
+    layout = _gantt_layout(project_plan)
+    if layout is None:
+        return {"svg": None, "png": None}
+
+    w, h = layout["width"], layout["height"]
+
+    # ── SVG ──
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" font-family="Helvetica">',
+        f'<rect x="0" y="0" width="{w}" height="{h}" fill="white"/>',
+        f'<text x="{w/2}" y="24" font-size="15" font-weight="bold" text-anchor="middle">'
+        f'Diagrama de Gantt — {html.escape(project_title)}</text>',
+    ]
+    for x, label in layout["weeks"]:
+        parts.append(f'<line x1="{x:.1f}" y1="{layout["header_h"]}" x2="{x:.1f}" y2="{h-layout["margin"]}" '
+                      f'stroke="#e2e8f0" stroke-width="1"/>')
+        parts.append(f'<text x="{x:.1f}" y="{layout["header_h"]-8}" font-size="9" fill="#64748b" '
+                      f'text-anchor="middle">{label}</text>')
+    for b in layout["bars"]:
+        cy = b["y"] + layout["row_h"] * 0.32
+        parts.append(f'<text x="{layout["margin"]}" y="{cy+11}" font-size="11" fill="#1e293b" '
+                      f'font-weight="600">{html.escape(b["label"])}</text>')
+        parts.append(f'<rect x="{b["x1"]:.1f}" y="{b["y"]:.1f}" width="{b["w"]:.1f}" '
+                      f'height="{layout["row_h"]*0.62:.1f}" rx="4" fill="{b["fill"]}" '
+                      f'stroke="{b["stroke"]}" stroke-width="1.6"/>')
+        text_x = b["x1"] + 6 if b["range_inside"] else b["x1"] + b["w"] + 6
+        text_fill = b["stroke"] if b["range_inside"] else "#475569"
+        parts.append(f'<text x="{text_x:.1f}" y="{b["y"]+layout["row_h"]*0.62/2+4:.1f}" '
+                      f'font-size="9" fill="{text_fill}">{html.escape(b["range"])}</text>')
+    parts.append('</svg>')
+    svg_path.write_text("\n".join(parts), encoding="utf-8")
+
+    # ── PNG (dibujado nativo con PIL — sin cairosvg, mismo layout que el SVG) ──
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        scale = 1.8
+        img = Image.new("RGB", (int(w * scale), int(h * scale)), "white")
+        draw = ImageDraw.Draw(img)
+        try:
+            font_title = ImageFont.truetype("segoeuib.ttf", int(15 * scale))
+            font_bold = ImageFont.truetype("segoeuib.ttf", int(11 * scale))
+            font_small = ImageFont.truetype("segoeui.ttf", int(9 * scale))
+        except Exception:
+            font_title = font_bold = font_small = ImageFont.load_default()
+
+        draw.text((w * scale / 2, 24 * scale), f"Diagrama de Gantt — {project_title}",
+                   fill="#0f172a", font=font_title, anchor="mm")
+        for x, label in layout["weeks"]:
+            xs = x * scale
+            draw.line([(xs, layout["header_h"] * scale), (xs, (h - layout["margin"]) * scale)],
+                       fill="#e2e8f0", width=1)
+            draw.text((xs, (layout["header_h"] - 8) * scale), label,
+                       fill="#64748b", font=font_small, anchor="mm")
+        for b in layout["bars"]:
+            y0 = b["y"] * scale
+            y1 = (b["y"] + layout["row_h"] * 0.62) * scale
+            x0 = b["x1"] * scale
+            x1 = (b["x1"] + b["w"]) * scale
+            draw.text((layout["margin"] * scale, y0 + (layout["row_h"] * 0.32) * scale), b["label"],
+                       fill="#1e293b", font=font_bold, anchor="lm")
+            draw.rounded_rectangle([x0, y0, x1, y1], radius=4 * scale,
+                                    fill=b["fill"], outline=b["stroke"], width=int(1.6 * scale))
+            if b["range_inside"]:
+                text_x, text_fill = x0 + 6 * scale, b["stroke"]
+            else:
+                text_x, text_fill = x1 + 6 * scale, "#475569"
+            draw.text((text_x, (y0 + y1) / 2), b["range"], fill=text_fill, font=font_small, anchor="lm")
+        img.save(png_path)
+    except Exception:
+        pass
+
+    return {"svg": svg_path if svg_path.exists() else None,
+            "png": png_path if png_path.exists() else None}
+
+
+# ── Imagen realista del prototipo del dispositivo ─────────────────────────────
+def _draw_prototype_fallback(png_path: Path, project_title: str, device_desc: str) -> None:
+    """Boceto de producto de respaldo (silueta + rótulo) para cuando la
+    generación de imagen por IA no está disponible (sin red, sin cuota,
+    modelo no habilitado para esta clave). Deja claro que es conceptual."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        w, h = 1000, 750
+        img = Image.new("RGB", (w, h), "#eef2f7")
+        draw = ImageDraw.Draw(img)
+        try:
+            f_title = ImageFont.truetype("segoeuib.ttf", 26)
+            f_body = ImageFont.truetype("segoeui.ttf", 16)
+        except Exception:
+            f_title = f_body = ImageFont.load_default()
+
+        draw.rectangle([30, 30, w - 30, h - 30], outline="#94a3b8", width=2)
+        # Silueta genérica de dispositivo electrónico (caja + panel + antena/led)
+        bx0, by0, bx1, by1 = w * 0.28, h * 0.30, w * 0.72, h * 0.62
+        draw.rounded_rectangle([bx0, by0, bx1, by1], radius=22, fill="#cbd5e1", outline="#475569", width=3)
+        draw.rounded_rectangle([bx0 + 24, by0 + 22, bx1 - 24, by1 - 40], radius=10,
+                                fill="#0f172a", outline="#1e293b", width=2)
+        draw.ellipse([bx1 - 46, by0 - 30, bx1 - 26, by0 - 10], fill="#22c55e", outline="#15803d")
+        draw.line([bx1 - 36, by0 - 20, bx1 - 36, by0], fill="#475569", width=3)
+        for i in range(4):
+            cx = bx0 + 40 + i * 26
+            draw.ellipse([cx, by1 + 14, cx + 14, by1 + 28], fill="#94a3b8", outline="#475569")
+
+        draw.text((w / 2, h * 0.72), "Boceto conceptual del prototipo", fill="#1e293b", font=f_title, anchor="mm")
+        draw.text((w / 2, h * 0.77), device_desc[:80], fill="#334155", font=f_body, anchor="mm")
+        draw.text((w / 2, h * 0.82),
+                   "Representación esquemática — no es una fotografía real del producto final.",
+                   fill="#64748b", font=f_body, anchor="mm")
+        img.save(png_path)
+    except Exception:
+        pass
+
+
+def generate_device_prototype_image(
+    diagram_dir: Path,
+    project_title: str,
+    overview: str,
+    device_names: Optional[List[str]] = None,
+    player=None,
+) -> Dict[str, Optional[Path]]:
+    """Genera una imagen realista del prototipo del dispositivo solicitado
+    usando el modelo de generación de imágenes de Gemini (reutiliza el
+    cliente y la clave ya configurados en core/config.py). Si el modelo de
+    imágenes no está disponible por cualquier motivo (red, cuota, modelo no
+    habilitado para esta clave), se genera un boceto conceptual de
+    respaldo para que la figura nunca falte en el entregable."""
+    diagram_dir.mkdir(parents=True, exist_ok=True)
+    png_path = diagram_dir / "prototipo_dispositivo.png"
+
+    device_desc = ", ".join(device_names) if device_names else project_title
+    prompt = (
+        f"Fotografía de producto realista y profesional de un prototipo de ingeniería electrónica: "
+        f"{device_desc}. Contexto funcional: {overview} "
+        "Estilo: fotografía de producto de estudio, fondo blanco o gris neutro, iluminación suave, "
+        "alta definición, ángulo de tres cuartos, aspecto de prototipo funcional real (placa "
+        "electrónica, componentes visibles, cables y carcasa según corresponda). Sin texto ni "
+        "marcas de agua en la imagen."
+    )
+
+    try:
+        from core.config import get_gemini_client
+        client = get_gemini_client()
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-preview-image",
+            contents=prompt,
+            config={"response_modalities": ["IMAGE", "TEXT"]},
+        )
+        for cand in getattr(response, "candidates", None) or []:
+            content = getattr(cand, "content", None)
+            if not content:
+                continue
+            for part in getattr(content, "parts", None) or []:
+                inline = getattr(part, "inline_data", None)
+                data = getattr(inline, "data", None) if inline else None
+                if data:
+                    png_path.write_bytes(data)
+                    break
+            if png_path.exists():
+                break
+    except Exception as e:
+        if player and hasattr(player, "write_log"):
+            player.write_log(
+                f"WARN: Generación de imagen del prototipo no disponible ({e}). "
+                "Se usará un boceto conceptual de respaldo."
+            )
+
+    if not png_path.exists() or png_path.stat().st_size < 2000:
+        _draw_prototype_fallback(png_path, project_title, device_desc)
+
+    return {"png": png_path if png_path.exists() else None}

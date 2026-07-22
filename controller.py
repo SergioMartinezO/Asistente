@@ -167,6 +167,17 @@ class RexController:
         self.ui.write_log(f"SYS: Iniciando cierre seguro — {reason}")
         self.ui.write_log("SYS: Guardando sesión y liberando recursos...")
 
+        # Red de seguridad: si algo en la secuencia de cierre se cuelga
+        # (I/O, un hilo que no responde, etc.), forzamos la salida del
+        # proceso completo después de un plazo fijo en vez de dejar la
+        # UI bloqueada indefinidamente.
+        def _shutdown_watchdog():
+            time.sleep(6.0)
+            print("[REX] 🔴 Watchdog: el cierre no terminó a tiempo — forzando salida.")
+            os._exit(0)
+
+        threading.Thread(target=_shutdown_watchdog, daemon=True).start()
+
         def _shutdown_worker():
             # 1) Detener actualización de métricas y monitoreo
             self._metrics_thread_running = False
@@ -208,9 +219,11 @@ class RexController:
             # 6) Dar un margen breve para limpieza
             time.sleep(0.3)
 
-            # 7) Finalizar app de forma limpia
+            # 7) Finalizar app de forma limpia — vía señal Qt para garantizar
+            # que quit() se ejecute en el hilo de la GUI, nunca directamente
+            # desde este hilo de trabajo.
             try:
-                self.ui._app.quit()
+                self.ui.request_quit()
             except Exception:
                 os._exit(0)
 
@@ -366,54 +379,41 @@ class RexController:
         t = (text or "").strip().lower()
         return t in {"no", "n", "cancelar", "cancela", "omitir", "stop", "detener"}
 
-    # Encadena automáticamente screen_process → electronics para analizar
-    # el circuito visible en pantalla sin que el usuario especifique herramientas.
+    # Dispara screen_process con una pregunta orientada a circuitos para
+    # analizar lo visible en pantalla sin que el usuario especifique herramientas.
+    # screen_process es asíncrono/"fire-and-forget": encola la captura en la
+    # sesión de visión de Gemini y esa sesión habla/loggea su propia respuesta
+    # directamente — no devuelve el texto de forma síncrona.
     async def _run_circuit_screen_analysis(self):
         loop = asyncio.get_event_loop()
         self.ui.write_log(
-            "SYS: Paso 1/2 — Capturando pantalla y extrayendo componentes...")
-        self._advance_progress(20, estado="Analizando",
+            "SYS: Capturando pantalla y analizando el circuito visible...")
+        self._advance_progress(30, estado="Analizando",
                                evento="Capturando pantalla")
         try:
-            screen_text = await loop.run_in_executor(
+            queued = await loop.run_in_executor(
                 None,
                 lambda: __import__("actions.screen_processor",
                                    fromlist=["screen_process"])
                 .screen_process(
-                    parameters={"action": "ocr",
-                                "extract_components": True},
+                    parameters={
+                        "angle": "screen",
+                        "text": (
+                            "Analiza el circuito o esquemático electrónico visible en pantalla: "
+                            "identifica los componentes, su tipo y su función. Sé técnico y conciso."
+                        ),
+                    },
                     player=self.ui
                 )
             )
-            if not screen_text or "error" in str(screen_text).lower():
+            if not queued:
                 self.speak(
-                    "No pude capturar la pantalla o extraer texto del circuito.")
+                    "No pude capturar la pantalla para analizar el circuito.")
                 return
-            self.ui.write_log(
-                f"SYS: Texto extraído: {str(screen_text)[:200]}...")
-            self._advance_progress(
-                50, estado="Analizando", evento="Identificando componentes")
 
-            # Paso 2: pasar el texto a electronics para análisis
             self.ui.write_log(
-                "SYS: Paso 2/2 — Analizando componentes con módulo de electrónica...")
-            analysis = await loop.run_in_executor(
-                self.engineering_executor,
-                lambda: __import__("actions.electronics",
-                                   fromlist=["electronics"])
-                .electronics(
-                    parameters={
-                        "action": "analyze_from_text",
-                        "source_text": str(screen_text),
-                    },
-                    player=self.ui,
-                    speak=self.speak,
-                )
-            )
-            result = str(analysis or "Análisis completado.").strip()
-            self.ui.write_log(f"ACT: Análisis de circuito: {result[:300]}")
-            self.speak(f"Análisis completado. {result[:250]}")
-            self._complete_task("Análisis de circuito en pantalla")
+                "SYS: Módulo de visión activado. El análisis del circuito se anunciará al terminar.")
+            self._complete_task("Análisis de circuito en pantalla iniciado")
 
         except Exception as e:
             self.speak_error("circuit_screen_analysis", e)
@@ -468,7 +468,7 @@ class RexController:
         while self._metrics_thread_running:
             try:
                 metrics = self.model.get_system_metrics()
-                self.ui._win.update_system_metrics(metrics)
+                self.ui.update_system_metrics(metrics)
 
                 # Alertas proactivas
                 alerts = self.model.metrics_tracker.check_alerts()
@@ -599,8 +599,27 @@ class RexController:
             self._is_speaking = value
         if value:
             self.ui.set_state("SPEAKING")
-        elif not self.ui.muted:
-            self.ui.set_state("LISTENING")
+        else:
+            # Apagar el nivel de audio del avatar al dejar de hablar, para
+            # que no se quede "pegado" en el último valor recibido.
+            if hasattr(self.ui, "set_audio_level"):
+                self.ui.set_audio_level(0.0)
+            if not self.ui.muted:
+                self.ui.set_state("LISTENING")
+
+    # RMS normalizado (0-1) de un chunk de audio PCM16 — usado para animar
+    # el avatar en tiempo real en sincronía con la voz real que se reproduce.
+    def _compute_audio_level(self, chunk: bytes) -> float:
+        try:
+            import numpy as np
+            samples = np.frombuffer(chunk, dtype=np.int16)
+            if samples.size == 0:
+                return 0.0
+            rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2)))
+            # Voz típica en PCM16 ronda RMS 500-6000; 6000 ~ volumen alto.
+            return max(0.0, min(1.0, rms / 6000.0))
+        except Exception:
+            return 0.0
 
     # Método speak mejorado que usa la cola de voz.
     def speak(self, text: str):
@@ -660,6 +679,13 @@ class RexController:
                 ):
                     return True
 
+            if code == 1000 or status_code == 1000:
+                # 1000 = cierre WebSocket normal (RFC 6455). El SDK de
+                # google-genai lo reenvía como APIError genérico cuando el
+                # servidor termina la sesión Live (p. ej. límite de duración
+                # de turno/sesión) en vez de tratarlo como un cierre limpio.
+                return True
+
             if code == 1008 or status_code == 1008:
                 return True
 
@@ -703,6 +729,29 @@ class RexController:
                     return True
         return False
 
+    # Formatea los últimos turnos de la sesión EN CURSO (todavía no
+    # persistida en disco) para inyectarlos al reconectar tras una caída de
+    # la sesión Live (p. ej. cierre de servidor código 1000 a mitad de una
+    # respuesta larga), evitando que Rex "olvide" de qué se estaba hablando.
+    def _format_live_session_context(self) -> str:
+        log = self.model.session_log
+        if not log:
+            return ""
+        lines = [
+            "[CONTINUACIÓN DE SESIÓN — la conexión de voz se reinició sola; "
+            "esto es lo que se habló justo antes de la reconexión]"
+        ]
+        for msg in log[-16:]:
+            role = msg.get("role", "")
+            text = msg.get("text", "")
+            if role and text:
+                lines.append(f"{role.upper()}: {text}")
+        lines.append(
+            "Continúa la conversación de forma natural desde aquí. "
+            "No vuelvas a saludar ni te presentes de nuevo."
+        )
+        return "\n".join(lines) + "\n\n"
+
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
 
@@ -717,11 +766,18 @@ class RexController:
             f"Use this to calculate exact times for reminders.\n\n"
         )
 
-        history_str = self.model.get_formatted_history()
+        # En una reconexión a mitad de sesión, priorizamos el contexto vivo
+        # (lo que realmente se acaba de hablar) sobre el resumen de la
+        # última sesión guardada en disco, que sería de una ejecución
+        # anterior y podría confundir la continuidad.
+        live_context = self._format_live_session_context()
+        history_str = "" if live_context else self.model.get_formatted_history()
         parts = [time_ctx]
         if mem_str:
             parts.append(mem_str)
-        if history_str:
+        if live_context:
+            parts.append(live_context)
+        elif history_str:
             parts.append(history_str)
         parts.append(sys_prompt)
 
@@ -819,46 +875,67 @@ class RexController:
             start_progress, estado="En proceso", evento=f"Ejecutando herramienta: {name}")
 
         if name == "save_memory":
-            category = args.get("category", "notes")
-            key = args.get("key", "")
-            value = args.get("value", "")
-            if key and value:
-                self.model.save_long_term_memory(category, key, value)
-                print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
-            if not self.ui.muted:
-                self.ui.set_state("LISTENING")
-            return types.FunctionResponse(
-                id=fc.id, name=name,
-                response={"result": "ok", "silent": True}
-            )
+            try:
+                category = args.get("category", "notes")
+                key = args.get("key", "")
+                value = args.get("value", "")
+                if key and value:
+                    self.model.save_long_term_memory(category, key, value)
+                    print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
+                if not self.ui.muted:
+                    self.ui.set_state("LISTENING")
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": "ok", "silent": True}
+                )
+            except Exception as e:
+                print(f"[Memory] ❌ save_memory failed: {e}")
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": f"Error guardando memoria: {e}", "silent": True}
+                )
 
         if name == "remember_technical":
-            from memory.memory_manager import remember_technical
-            key = args.get("key", "")
-            value = args.get("value", "")
-            cat = args.get("category") or None
-            result_mem = remember_technical(
-                key, value, cat) if key and value else "Parámetros insuficientes."
-            print(f"[TechMemory] 💾 {result_mem}")
-            return types.FunctionResponse(
-                id=fc.id, name=name,
-                response={"result": result_mem, "silent": True}
-            )
+            try:
+                from memory.memory_manager import remember_technical
+                key = args.get("key", "")
+                value = args.get("value", "")
+                cat = args.get("category") or None
+                result_mem = remember_technical(
+                    key, value, cat) if key and value else "Parámetros insuficientes."
+                print(f"[TechMemory] 💾 {result_mem}")
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": result_mem, "silent": True}
+                )
+            except Exception as e:
+                print(f"[TechMemory] ❌ remember_technical failed: {e}")
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": f"Error guardando memoria técnica: {e}", "silent": True}
+                )
 
         if name == "recall_technical":
-            from memory.memory_manager import recall_technical, format_tech_memory_for_prompt
-            query = args.get("query", "")
-            results = recall_technical(query, top_k=5)
-            if results:
-                summary = "\n".join(
-                    f"[{r['category'].upper()}] {r['key']}: {r['value'][:200]}" for r in results
+            try:
+                from memory.memory_manager import recall_technical, format_tech_memory_for_prompt
+                query = args.get("query", "")
+                results = recall_technical(query, top_k=5)
+                if results:
+                    summary = "\n".join(
+                        f"[{r['category'].upper()}] {r['key']}: {r['value'][:200]}" for r in results
+                    )
+                else:
+                    summary = "No se encontraron soluciones técnicas previas para esa consulta."
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": summary}
                 )
-            else:
-                summary = "No se encontraron soluciones técnicas previas para esa consulta."
-            return types.FunctionResponse(
-                id=fc.id, name=name,
-                response={"result": summary}
-            )
+            except Exception as e:
+                print(f"[TechMemory] ❌ recall_technical failed: {e}")
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": f"Error recuperando memoria técnica: {e}"}
+                )
 
         loop = asyncio.get_event_loop()
         result = "Hecho."
@@ -899,7 +976,7 @@ class RexController:
                 "materials_science": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.materials_science", "materials_science", parameters=args, player=self.ui, speak=self.speak)),
                 "proteus_automation": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.proteus_automation", "proteus_automation", parameters=args, player=self.ui, speak=self.speak)),
                 "ltspice_automation": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.ltspice_automation", "ltspice_automation", parameters=args, player=self.ui, speak=self.speak)),
-                "flight_finder": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.flight_finder", "flight_finder", parameters=args, player=self.ui)),
+                "flight_finder": lambda: loop.run_in_executor(None, lambda: _run_sync("actions.flight_finder", "flight_finder", parameters=args, player=self.ui, speak=self.speak)),
             }
 
             if name == "screen_process":
@@ -941,6 +1018,9 @@ class RexController:
                     self.ui.write_log("SYS: ⚠ web_search llamado mientras se espera confirmación. Ignorando.")
                     # Devolver resultado que NO genere más llamadas
                     result = "BÚSQUEDA_PENDIENTE: Ya se está esperando confirmación del usuario. No hagas nada. Solo espera."
+                elif self._web_search_executed:
+                    self.ui.write_log("SYS: ⚠ web_search llamado mientras otra búsqueda está en curso. Ignorando.")
+                    result = "BÚSQUEDA_EN_PROGRESO: Ya hay una búsqueda web en ejecución. No hagas nada. Espera a que termine."
                 else:
                     query = args.get("query", "").strip()
                     items = args.get("items", [])
@@ -982,14 +1062,35 @@ class RexController:
                     )
                 
             elif name == "file_processor":
-                if not args.get("file_path") and self.ui.current_file:
-                    args["file_path"] = self.ui.current_file
-                r = await loop.run_in_executor(
-                    None,
-                    lambda: file_processor(
-                        parameters=args, player=self.ui, speak=self.speak)
-                )
-                result = r or "Hecho."
+                from actions.file_processor import file_processor
+
+                attached = list(getattr(self.ui, "attached_files", []) or [])
+                if args.get("file_path") or len(attached) <= 1:
+                    # Un solo archivo (explícito o el único adjunto): igual que siempre.
+                    if not args.get("file_path") and self.ui.current_file:
+                        args["file_path"] = self.ui.current_file
+                    r = await loop.run_in_executor(
+                        None,
+                        lambda: file_processor(
+                            parameters=args, player=self.ui, speak=self.speak)
+                    )
+                    result = r or "Hecho."
+                else:
+                    # Varios archivos adjuntos y ninguno especificado
+                    # explícitamente: se analizan todos con la misma acción.
+                    self.ui.write_log(
+                        f"ACT: Analizando {len(attached)} archivos adjuntos...")
+                    partes = []
+                    for fp in attached:
+                        file_args = dict(args)
+                        file_args["file_path"] = fp
+                        r = await loop.run_in_executor(
+                            None,
+                            lambda fa=file_args: file_processor(
+                                parameters=fa, player=self.ui, speak=None)
+                        )
+                        partes.append(f"[{Path(fp).name}] {r or 'Hecho.'}")
+                    result = "\n".join(partes)
             elif name == "electronics":
                 from actions.electronics import ElectronicsAction
                 action_instance = ElectronicsAction()
@@ -1224,12 +1325,20 @@ class RexController:
         self.ui.write_log(
             "ACT: Audio estable activado (PCM16 alineado, baja latencia)")
 
+        # latency="high" en vez de "low": cada chunk se escribe vía
+        # asyncio.to_thread (un despacho al thread-pool por chunk), compitiendo
+        # con el resto de tareas asíncronas y con hilos de UI/métricas/voz.
+        # Con buffer "low" cualquier jitter de scheduling vacía el buffer del
+        # driver y se oye como robótico/entrecortado — más notorio cuanto más
+        # larga es la respuesta (más chunks = más oportunidades de cortarse).
+        # "high" da al driver más margen a costa de un poco más de latencia
+        # inicial, mucho más estable para audio largo.
         stream = sd.RawOutputStream(
             samplerate=RECEIVE_SAMPLE_RATE,
             channels=CHANNELS,
             dtype="int16",
             blocksize=PLAYBACK_BLOCKSIZE,
-            latency="low",
+            latency="high",
         )
         stream.start()
 
@@ -1259,6 +1368,10 @@ class RexController:
                 rem = len(chunk) % frame_bytes
                 if rem:
                     chunk = chunk[:len(chunk) - rem]
+
+                if hasattr(self.ui, "set_audio_level"):
+                    self.ui.set_audio_level(self._compute_audio_level(chunk))
+
                 await asyncio.to_thread(stream.write, chunk)
         except Exception as e:
             print(f"[REX] ❌ Play: {e}")
@@ -1277,6 +1390,9 @@ class RexController:
         client = get_gemini_client()
 
         while True:
+            if self._shutdown_requested:
+                print("[REX] 🔴 Cierre solicitado — deteniendo bucle de conexión.")
+                break
             try:
                 print("[REX] 🔌 Conectando...")
                 self.ui.set_state("THINKING")
@@ -1296,7 +1412,7 @@ class RexController:
                     print("[REX] ✅ Conectado....")
                     self.ui.set_state("LISTENING")
                     self.ui.write_log("━" * 42)
-                    self.ui.write_log("  ◈  MARK XXXIX  —  SISTEMA EN LÍNEA")
+                    self.ui.write_log("  ◈  REX  —  SISTEMA EN LÍNEA")
                     self.ui.write_log("━" * 42)
                     self.ui.write_log(
                         "SYS: Conexión con Gemini Live establecida.")
@@ -1323,6 +1439,10 @@ class RexController:
                     tg.create_task(self._play_audio())
 
             except Exception as e:
+                if self._shutdown_requested:
+                    print("[REX] 🔴 Cierre en progreso — no se reconectará.")
+                    break
+
                 if self._is_audio_content_unsupported(e) and self._audio_input_enabled:
                     self._audio_input_enabled = False
                     self._audio_input_disabled_reason = (

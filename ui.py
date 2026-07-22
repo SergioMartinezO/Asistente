@@ -21,7 +21,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QBrush, QColor, QDragEnterEvent, QDropEvent, QFont,
-    QKeySequence, QPainter, QPen, QPixmap,
+    QKeySequence, QPainter, QPen, QPixmap, QRadialGradient,
     QDesktopServices,
     QShortcut,
     QTextImageFormat, QTextDocument, QTextCharFormat, QImage,
@@ -72,6 +72,33 @@ class C:
     WHITE     = "#d8f8ff"
     DARK      = "#000d14"
     BAR_BG    = "#011520"
+
+
+class CLight:
+    """Paleta clara para SimpleMainWindow. Mismos roles que C, valores
+    pensados para fondos blancos/grises claros con texto oscuro."""
+
+    BG        = "#eef1f4"
+    PANEL     = "#ffffff"
+    PANEL2    = "#f1f3f5"
+    BORDER    = "#d5dbe0"
+    BORDER_B  = "#aab4bd"
+    BORDER_A  = "#c3cad1"
+    PRI       = "#1565c0"
+    PRI_DIM   = "#5b93cf"
+    PRI_GHO   = "#e3eefa"
+    ACC       = "#c2570f"
+    ACC2      = "#b8860b"
+    GREEN     = "#1e8e3e"
+    GREEN_D   = "#166b2e"
+    RED       = "#c62828"
+    MUTED_C   = "#c62828"
+    TEXT      = "#1a2733"
+    TEXT_DIM  = "#5f6b76"
+    TEXT_MED  = "#3a4652"
+    WHITE     = "#16202b"
+    DARK      = "#ffffff"
+    BAR_BG    = "#e4e8ec"
 
 
 def qcol(h: str, a: int = 255) -> QColor:
@@ -1270,6 +1297,9 @@ class MainWindow(QMainWindow):
     _log_sig   = pyqtSignal(str)
     _state_sig = pyqtSignal(str)
     _activity_sig = pyqtSignal(object)
+    _web_results_sig = pyqtSignal(str)
+    _metrics_sig = pyqtSignal(dict)
+    _quit_sig = pyqtSignal()
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -1328,6 +1358,9 @@ class MainWindow(QMainWindow):
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
         self._activity_sig.connect(self._apply_activity_update)
+        self._web_results_sig.connect(self.add_recent_web_results)
+        self._metrics_sig.connect(self.update_system_metrics)
+        self._quit_sig.connect(self._do_quit)
 
         self._overlay: SetupOverlay | None = None
         self._ready = self._check_config()
@@ -1356,6 +1389,14 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         event.accept()
+
+    def _do_quit(self):
+        """Slot ejecutado en el hilo de la GUI (vía _quit_sig) para cerrar
+        la aplicación de forma segura, sin importar desde qué hilo se
+        solicitó el cierre."""
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
     def _toggle_fullscreen(self):
         if self.isFullScreen():
@@ -1998,11 +2039,668 @@ class RexUI:
         })
 
     def add_recent_web_results(self, raw_text: str):
-        self._win.add_recent_web_results(raw_text)
+        self._win._web_results_sig.emit(raw_text)
+
+    def update_system_metrics(self, snap: dict):
+        self._win._metrics_sig.emit(snap)
+
+    def request_quit(self):
+        """Solicita el cierre de la aplicación de forma segura desde
+        cualquier hilo (se marshalla al hilo de la GUI vía señal Qt)."""
+        self._win._quit_sig.emit()
 
     def wait_for_api_key(self):
         while not self._win._ready:
             time.sleep(0.1)
+
+    def start_speaking(self):
+        self.set_state("SPEAKING")
+
+    def stop_speaking(self):
+        if not self.muted:
+            self.set_state("LISTENING")
+
+
+GIDEON_IMAGE_PATH = BASE_DIR / "gideon" / "Gideon.png"
+
+# Posición aproximada del área de la boca dentro de gideon/Gideon.png,
+# estimada visualmente sobre el retrato (796x998, rostro frontal centrado).
+# Coordenadas normalizadas (0-1) relativas a la imagen completa: centro y
+# tamaño de la caja que se recorta para animar la apertura de la boca.
+_GIDEON_MOUTH_REL = (0.49, 0.36)
+_GIDEON_MOUTH_BOX_REL = (0.17, 0.085)  # (ancho, alto) normalizados
+
+# Etiquetas de estado del avatar en español (los identificadores internos
+# se mantienen en inglés porque controller.py los usa para comparaciones de
+# lógica; esta tabla solo traduce lo que se muestra en pantalla).
+_STATE_ES = {
+    "LISTENING": "ESCUCHANDO",
+    "SPEAKING": "HABLANDO",
+    "THINKING": "PENSANDO",
+    "PROCESSING": "PROCESANDO",
+    "MUTED": "SILENCIADO",
+    "INITIALISING": "INICIANDO",
+}
+
+
+def _state_es(state: str) -> str:
+    return _STATE_ES.get(state, state)
+
+
+# Prefijos de log en español. Los identificadores internos (los que
+# controller.py/actions/*.py escriben con write_log) se mantienen en inglés
+# en el código — esta tabla solo traduce lo que ve el usuario en pantalla.
+_LOG_PREFIX_ES = {
+    "SYS": "Sistema",
+    "ACT": "Actuación",
+    "ERR": "Error",
+    "WARN": "Aviso",
+    "DEV": "Desarrollo",
+    "DS": "Datos",
+    "ELEC": "Electrónica",
+    "MATS": "Materiales",
+    "MECA": "Mecatrónica",
+    "PROT": "Proteus",
+}
+_LOG_PREFIX_RE = re.compile(r"^(" + "|".join(_LOG_PREFIX_ES.keys()) + r"):\s?")
+
+
+def _translate_log_prefix(text: str) -> str:
+    m = _LOG_PREFIX_RE.match(text or "")
+    if not m:
+        return text
+    prefix = m.group(1)
+    return f"{_LOG_PREFIX_ES[prefix]}: {text[m.end():]}"
+
+
+class AvatarWidget(QWidget):
+    """Muestra la imagen de Rex (holograma) y la anima en tiempo real según
+    el audio que se está reproduciendo: glow + pulso sutil de escala
+    sincronizados con el nivel real de la voz, más un resplandor localizado
+    cerca de la boca. No es lip-sync fonema a fonema (solo hay una imagen
+    estática), pero da una respuesta visual genuina y en vivo a la voz —
+    el efecto de "vocalizar" que usan Alexa/Siri con sus indicadores
+    luminosos en vez de animar una boca literal."""
+
+    def __init__(self, image_path: str = "", parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+        self.setMinimumSize(260, 260)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        pix = QPixmap(image_path) if image_path else QPixmap()
+        self._pixmap = pix if not pix.isNull() else None
+        self._mouth_crop: QPixmap | None = None
+        self._mouth_rect_rel: tuple[float, float, float, float] | None = None
+        self._build_mouth_crop()
+
+        self.state = "INITIALISING"
+        self.muted = False
+        self.speaking = False
+
+        self._level = 0.0          # nivel de audio suavizado (0-1)
+        self._level_target = 0.0   # último nivel de audio recibido (0-1)
+        self._idle_t = 0.0
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._tick)
+        self.timer.start(33)
+
+    def _build_mouth_crop(self):
+        """Recorta la región estimada de la boca en un QPixmap aparte, con
+        un degradado de alfa elíptico en el borde (para que al escalarlo
+        verticalmente y volver a dibujarlo encima no se note el corte
+        rectangular sobre el resto de la imagen)."""
+        if self._pixmap is None:
+            return
+        pw, ph = self._pixmap.width(), self._pixmap.height()
+        cx, cy = _GIDEON_MOUTH_REL[0] * pw, _GIDEON_MOUTH_REL[1] * ph
+        box_w, box_h = _GIDEON_MOUTH_BOX_REL[0] * pw, _GIDEON_MOUTH_BOX_REL[1] * ph
+        rx, ry = int(cx - box_w / 2), int(cy - box_h / 2)
+        rw, rh = int(box_w), int(box_h)
+        if rw <= 0 or rh <= 0:
+            return
+        rx = max(0, min(rx, pw - rw))
+        ry = max(0, min(ry, ph - rh))
+
+        region = self._pixmap.copy(rx, ry, rw, rh)
+        if region.isNull():
+            return
+
+        img = region.toImage().convertToFormat(QImage.Format.Format_ARGB32)
+        mask = QImage(rw, rh, QImage.Format.Format_ARGB32)
+        mask.fill(Qt.GlobalColor.transparent)
+        mp = QPainter(mask)
+        mp.setRenderHint(QPainter.RenderHint.Antialiasing)
+        grad = QRadialGradient(QPointF(rw / 2, rh / 2), max(rw, rh) / 2)
+        grad.setColorAt(0.0, QColor(255, 255, 255, 255))
+        grad.setColorAt(0.6, QColor(255, 255, 255, 255))
+        grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+        mp.setPen(Qt.PenStyle.NoPen)
+        mp.setBrush(QBrush(grad))
+        mp.drawEllipse(0, 0, rw, rh)
+        mp.end()
+
+        mp2 = QPainter(img)
+        mp2.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+        mp2.drawImage(0, 0, mask)
+        mp2.end()
+
+        self._mouth_crop = QPixmap.fromImage(img)
+        self._mouth_rect_rel = (rx / pw, ry / ph, rw / pw, rh / ph)
+
+    def set_audio_level(self, level: float):
+        self._level_target = max(0.0, min(1.0, level))
+
+    def _tick(self):
+        # Suaviza hacia el nivel objetivo para que el pulso no se vea a
+        # saltos entre chunks de audio consecutivos.
+        self._level += (self._level_target - self._level) * 0.35
+        self._idle_t += 0.035
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+
+        painter.fillRect(self.rect(), qcol("#05070a"))
+
+        w, h = self.width(), self.height()
+        base_col = C.MUTED_C if self.muted else C.PRI
+
+        if self.muted:
+            glow, pulse = 0.12, 1.0
+        elif self.speaking:
+            glow, pulse = 0.30 + self._level * 0.70, 1.0 + self._level * 0.05
+        elif self.state in ("THINKING", "PROCESSING"):
+            glow = 0.35 + 0.15 * (0.5 + 0.5 * math.sin(self._idle_t * 3.2))
+            pulse = 1.0
+        else:
+            glow = 0.20 + 0.10 * (0.5 + 0.5 * math.sin(self._idle_t))
+            pulse = 1.0
+
+        if self._pixmap is not None:
+            pw, ph = self._pixmap.width(), self._pixmap.height()
+            avail_w, avail_h = max(1, w - 16), max(1, h - 16)
+            scale = min(avail_w / pw, avail_h / ph) * pulse
+            draw_w, draw_h = pw * scale, ph * scale
+            x, y = (w - draw_w) / 2, (h - draw_h) / 2
+            target = QRectF(x, y, draw_w, draw_h)
+
+            # Halo exterior — crece/brilla con el nivel de audio o el pulso idle
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(qcol(base_col, int(55 * glow))))
+            pad = 12 + glow * 16
+            painter.drawRoundedRect(
+                QRectF(x - pad, y - pad, draw_w + pad * 2, draw_h + pad * 2), 18, 18
+            )
+
+            painter.drawPixmap(target, self._pixmap, QRectF(0, 0, pw, ph))
+
+            # Movimiento real de boca: recorta la región de la boca y la
+            # vuelve a dibujar estirada verticalmente según el nivel de
+            # audio real (más fuerte = boca más abierta). Los bordes del
+            # recorte tienen un degradado de alfa para que se funda con el
+            # resto de la imagen en vez de notarse como un rectángulo.
+            if self._mouth_crop is not None and self._mouth_rect_rel is not None and self.speaking:
+                mrx, mry, mrw, mrh = self._mouth_rect_rel
+                base_x = x + mrx * draw_w
+                base_y = y + mry * draw_h
+                base_w = mrw * draw_w
+                base_h = mrh * draw_h
+
+                open_amt = self._level
+                scale_y = 1.0 + open_amt * 0.70
+                scale_x = 1.0 + open_amt * 0.12
+                tw, th = base_w * scale_x, base_h * scale_y
+                tx = base_x - (tw - base_w) / 2
+                ty = base_y - (th - base_h) / 2 + open_amt * (base_h * 0.12)
+
+                painter.drawPixmap(
+                    QRectF(tx, ty, tw, th), self._mouth_crop,
+                    QRectF(0, 0, self._mouth_crop.width(), self._mouth_crop.height())
+                )
+
+            painter.setPen(QPen(qcol(base_col, 90 + int(120 * glow)), 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(target, 14, 14)
+
+            # Resplandor de energía localizado en la boca, atado al nivel de
+            # audio real (no al glow ambiental idle) — es lo que hace que se
+            # lea como "está hablando" y no solo "está brillando". Encaja
+            # con la estética holográfica mejor que simular una sombra
+            # realista de cavidad bucal, que no existe en la imagen fuente.
+            mouth_glow = self._level if self.speaking else 0.0
+            if mouth_glow > 0.04:
+                mx = x + _GIDEON_MOUTH_REL[0] * draw_w
+                my = y + _GIDEON_MOUTH_REL[1] * draw_h
+                radius = draw_w * (0.09 + 0.11 * mouth_glow)
+                grad = QRadialGradient(QPointF(mx, my), radius)
+                grad.setColorAt(0.0, qcol(C.WHITE, int(210 * mouth_glow)))
+                grad.setColorAt(0.45, qcol(base_col, int(150 * mouth_glow)))
+                grad.setColorAt(1.0, qcol(base_col, 0))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(grad))
+                painter.drawEllipse(QPointF(mx, my), radius, radius)
+        else:
+            painter.setPen(qcol(C.TEXT_DIM))
+            painter.setFont(QFont("Consolas", 10))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "R.E.X")
+
+        painter.setPen(qcol(C.MUTED_C if self.muted else C.TEXT))
+        painter.setFont(QFont("Consolas", 9, QFont.Weight.Bold))
+        label = _state_es("MUTED") if self.muted else _state_es(self.state)
+        painter.drawText(
+            self.rect().adjusted(0, 0, 0, -8),
+            Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter,
+            f"REX · {label}",
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# UI SIMPLIFICADA — consola + input + botón de voz + CPU/RAM.
+# Sin panel de actividad detallado, sin tarjetas de resultados web, sin
+# zona de arrastrar archivos, sin overlay de configuración inicial.
+# Implementa exactamente el mismo contrato que RexUI (ver lista de
+# self.ui.* usados por RexController) para que el controlador de voz en
+# vivo (Gemini Live) funcione sin ningún cambio.
+# ═══════════════════════════════════════════════════════════════════════════
+class SimpleMainWindow(QMainWindow):
+    _log_sig = pyqtSignal(str)
+    _state_sig = pyqtSignal(str)
+    _activity_sig = pyqtSignal(object)
+    _web_results_sig = pyqtSignal(str)
+    _metrics_sig = pyqtSignal(dict)
+    _quit_sig = pyqtSignal()
+    _audio_level_sig = pyqtSignal(float)
+
+    def __init__(self, face_path: str = ""):
+        super().__init__()
+        self.setWindowTitle("Asistente Electrónico AI — REX CORE (simplificado)")
+        self.resize(_DEFAULT_W, _DEFAULT_H)
+        self.setMinimumSize(_MIN_W, _MIN_H)
+        self.setStyleSheet(f"QMainWindow {{ background-color: {CLight.BG}; }}")
+
+        self.on_text_command = None
+        self.on_permission_check = None
+        self.on_close_callback = None
+        self._muted = False
+        self._attached_files: list[str] = []
+        self.setAcceptDrops(True)
+
+        self._init_ui(face_path)
+
+        self._log_sig.connect(self._append_log)
+        self._state_sig.connect(self._apply_state)
+        self._activity_sig.connect(self._apply_activity_update)
+        self._web_results_sig.connect(self._append_web_result)
+        self._metrics_sig.connect(self._apply_metrics)
+        self._quit_sig.connect(self._do_quit)
+        self._audio_level_sig.connect(self._apply_audio_level)
+
+        sc_mute = QShortcut(QKeySequence("F4"), self)
+        sc_mute.activated.connect(self._toggle_mute)
+
+    def _init_ui(self, face_path: str):
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout_principal = QHBoxLayout(central)
+        layout_principal.setContentsMargins(10, 10, 10, 10)
+        layout_principal.setSpacing(10)
+
+        # Panel izquierdo: consola de chat + input
+        panel_izq = QFrame()
+        panel_izq.setStyleSheet(
+            f"QFrame {{ background-color: {CLight.PANEL}; "
+            f"border: 1px solid {CLight.BORDER}; border-radius: 6px; }}"
+        )
+        layout_izq = QVBoxLayout(panel_izq)
+
+        self.consola_chat = QTextEdit()
+        self.consola_chat.setReadOnly(True)
+        self.consola_chat.setFont(QFont("Consolas", 10))
+        self.consola_chat.setStyleSheet(
+            f"QTextEdit {{ background-color: {CLight.DARK}; color: {CLight.TEXT}; "
+            f"border: none; padding: 10px; }}"
+        )
+        layout_izq.addWidget(self.consola_chat)
+
+        # Fila de archivos adjuntos: botón para elegir varios, o arrastrar y
+        # soltar directamente sobre la ventana. REX los analiza con la
+        # herramienta file_processor cuando se lo pidas.
+        layout_attach = QHBoxLayout()
+
+        self.btn_attach = QPushButton("📎 Adjuntar")
+        self.btn_attach.setFont(QFont("Consolas", 9, QFont.Weight.Bold))
+        self.btn_attach.setStyleSheet(
+            f"QPushButton {{ background-color: {CLight.PANEL2}; color: {CLight.TEXT_MED}; "
+            f"border: 1px solid {CLight.BORDER_A}; padding: 5px 10px; border-radius: 4px; }} "
+            f"QPushButton:hover {{ background-color: {CLight.PRI_GHO}; color: {CLight.PRI}; }}"
+        )
+        self.btn_attach.clicked.connect(self._browse_attach)
+        layout_attach.addWidget(self.btn_attach)
+
+        self.lbl_attachments = QLabel("Sin archivos adjuntos — arrastra archivos aquí o usa el botón")
+        self.lbl_attachments.setFont(QFont("Consolas", 9))
+        self.lbl_attachments.setStyleSheet(f"color: {CLight.TEXT_DIM}; border: none;")
+        self.lbl_attachments.setWordWrap(True)
+        layout_attach.addWidget(self.lbl_attachments, stretch=1)
+
+        self.btn_clear_attach = QPushButton("✕")
+        self.btn_clear_attach.setFont(QFont("Consolas", 9, QFont.Weight.Bold))
+        self.btn_clear_attach.setFixedWidth(28)
+        self.btn_clear_attach.setStyleSheet(
+            f"QPushButton {{ background-color: {CLight.PANEL2}; color: {CLight.MUTED_C}; "
+            f"border: 1px solid {CLight.BORDER_A}; border-radius: 4px; }} "
+            f"QPushButton:hover {{ background-color: {CLight.MUTED_C}; color: #ffffff; }}"
+        )
+        self.btn_clear_attach.clicked.connect(self._clear_attachments)
+        self.btn_clear_attach.setVisible(False)
+        layout_attach.addWidget(self.btn_clear_attach)
+
+        layout_izq.addLayout(layout_attach)
+
+        layout_input = QHBoxLayout()
+
+        self.btn_mic = QPushButton()
+        self.btn_mic.setFont(QFont("Consolas", 10, QFont.Weight.Bold))
+        self.btn_mic.clicked.connect(self._toggle_mute)
+        layout_input.addWidget(self.btn_mic)
+        self._style_mic_btn()
+
+        self.input_comandos = QLineEdit()
+        self.input_comandos.setFont(QFont("Consolas", 11))
+        self.input_comandos.setPlaceholderText(
+            "El micrófono está siempre activo — habla cuando quieras. "
+            "También puedes escribir comandos aquí..."
+        )
+        self.input_comandos.setStyleSheet(
+            f"QLineEdit {{ background-color: {CLight.PANEL2}; color: {CLight.WHITE}; "
+            f"border: 1px solid {CLight.BORDER_A}; padding: 8px; border-radius: 4px; }}"
+        )
+        self.input_comandos.returnPressed.connect(self._al_enviar_comando)
+        layout_input.addWidget(self.input_comandos)
+
+        btn_enviar = QPushButton("EJECUTAR")
+        btn_enviar.setFont(QFont("Consolas", 10, QFont.Weight.Bold))
+        btn_enviar.setStyleSheet(
+            f"QPushButton {{ background-color: {CLight.PRI_GHO}; color: {CLight.PRI}; "
+            f"border: 1px solid {CLight.PRI}; padding: 8px 15px; border-radius: 4px; }} "
+            f"QPushButton:hover {{ background-color: {CLight.PRI}; color: {CLight.BG}; }}"
+        )
+        btn_enviar.clicked.connect(self._al_enviar_comando)
+        layout_input.addWidget(btn_enviar)
+
+        layout_izq.addLayout(layout_input)
+        layout_principal.addWidget(panel_izq, stretch=3)
+
+        # Panel derecho: HUD + telemetría mínima
+        panel_der = QFrame()
+        panel_der.setFixedWidth(_RIGHT_W)
+        panel_der.setStyleSheet(
+            f"QFrame {{ background-color: {CLight.PANEL}; "
+            f"border: 1px solid {CLight.BORDER}; border-radius: 6px; }}"
+        )
+        layout_der = QVBoxLayout(panel_der)
+
+        # Avatar de Rex (imagen personalizada) — se deja con fondo oscuro a
+        # propósito: funciona como una "pantalla"/holograma empotrado en el
+        # panel claro, y reacciona en vivo al audio de la voz.
+        avatar_path = str(GIDEON_IMAGE_PATH) if GIDEON_IMAGE_PATH.exists() else (face_path or "")
+        self.hud = AvatarWidget(avatar_path)
+        layout_der.addWidget(self.hud, stretch=2)
+
+        lbl = QLabel("TELEMETRÍA")
+        lbl.setFont(QFont("Consolas", 9, QFont.Weight.Bold))
+        lbl.setStyleSheet(f"color: {CLight.TEXT_MED}; border: none; margin-top: 10px;")
+        layout_der.addWidget(lbl)
+
+        self.bar_cpu = QProgressBar()
+        self.bar_mem = QProgressBar()
+        for bar, label in [(self.bar_cpu, "CPU"), (self.bar_mem, "RAM")]:
+            bar.setRange(0, 100)
+            bar.setFormat(f"{label}: %v%")
+            bar.setStyleSheet(
+                f"QProgressBar {{ background-color: {CLight.BAR_BG}; "
+                f"border: 1px solid {CLight.BORDER_A}; border-radius: 3px; "
+                f"text-align: center; color: {CLight.WHITE}; "
+                f"font-family: Consolas; font-size: 11px; }} "
+                f"QProgressBar::chunk {{ background-color: {CLight.PRI_DIM}; }}"
+            )
+            layout_der.addWidget(bar)
+
+        layout_principal.addWidget(panel_der, stretch=1)
+
+        self.consola_chat.append(
+            "[SISTEMA]: Núcleo operativo. Micrófono en vivo — habla cuando quieras "
+            "(F4 o el botón para silenciar)."
+        )
+
+    # ── Slots — se ejecutan siempre en el hilo de la GUI ────────────────
+    def _append_log(self, text: str):
+        clean = (text or "").replace("\n", " ")
+        self.consola_chat.append(_translate_log_prefix(clean))
+
+    def _append_web_result(self, text: str):
+        self.consola_chat.append(f"Web: {text}")
+
+    def _apply_state(self, state: str):
+        self.hud.state = state
+        self.hud.speaking = (state == "SPEAKING")
+
+    def _apply_activity_update(self, payload: object):
+        if not isinstance(payload, dict):
+            return
+        evento = payload.get("evento")
+        if evento:
+            self.consola_chat.append(f"Actuación: {evento}")
+
+    def _apply_metrics(self, snap: dict):
+        self.bar_cpu.setValue(int(snap.get("cpu", 0.0)))
+        self.bar_mem.setValue(int(snap.get("mem", 0.0)))
+
+    def _apply_audio_level(self, level: float):
+        self.hud.set_audio_level(level)
+
+    def _do_quit(self):
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+    # ── Interacción del usuario ──────────────────────────────────────────
+    def _toggle_mute(self):
+        self._muted = not self._muted
+        self.hud.muted = self._muted
+        self._style_mic_btn()
+        self.consola_chat.append(
+            "SYS: Micrófono silenciado." if self._muted else "SYS: Micrófono activo."
+        )
+
+    def _style_mic_btn(self):
+        if self._muted:
+            self.btn_mic.setText("🔇 SILENCIADO")
+            self.btn_mic.setStyleSheet(
+                f"QPushButton {{ background-color: #fbe4e4; color: {CLight.MUTED_C}; "
+                f"border: 1px solid {CLight.MUTED_C}; padding: 8px 12px; border-radius: 4px; }}"
+            )
+        else:
+            self.btn_mic.setText("🎙️ VOZ")
+            self.btn_mic.setStyleSheet(
+                f"QPushButton {{ background-color: {CLight.PRI_GHO}; color: {CLight.ACC}; "
+                f"border: 1px solid {CLight.ACC}; padding: 8px 12px; border-radius: 4px; }} "
+                f"QPushButton:hover {{ background-color: {CLight.ACC}; color: #ffffff; }}"
+            )
+
+    def _al_enviar_comando(self):
+        text = self.input_comandos.text().strip()
+        if not text:
+            return
+        self.input_comandos.clear()
+        if callable(self.on_text_command):
+            self.on_text_command(text)
+        else:
+            self.consola_chat.append("[ERROR]: Controlador no conectado.")
+
+    # ── Archivos adjuntos ────────────────────────────────────────────────
+    def _browse_attach(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Selecciona uno o varios archivos para REX", str(Path.home()),
+            "Todos los archivos (*.*)"
+        )
+        if paths:
+            self._add_attachments(paths)
+
+    def _add_attachments(self, paths: list[str]):
+        added = 0
+        for p in paths:
+            if p and p not in self._attached_files and Path(p).is_file():
+                self._attached_files.append(p)
+                added += 1
+        if added:
+            self._update_attach_label()
+            self.consola_chat.append(
+                f"SYS: {added} archivo{'s' if added != 1 else ''} adjuntado{'s' if added != 1 else ''}. "
+                "Pídele a REX que lo analice cuando quieras."
+            )
+
+    def _clear_attachments(self):
+        self._attached_files.clear()
+        self._update_attach_label()
+
+    def get_attached_files(self) -> list[str]:
+        return list(self._attached_files)
+
+    def _update_attach_label(self):
+        n = len(self._attached_files)
+        if n == 0:
+            self.lbl_attachments.setText("Sin archivos adjuntos — arrastra archivos aquí o usa el botón")
+            self.btn_clear_attach.setVisible(False)
+        else:
+            names = [Path(p).name for p in self._attached_files]
+            preview = ", ".join(names[:3])
+            if n > 3:
+                preview += f" y {n - 3} más"
+            plural = "s" if n != 1 else ""
+            self.lbl_attachments.setText(f"{n} archivo{plural} adjunto{plural}: {preview}")
+            self.btn_clear_attach.setVisible(True)
+
+    def dragEnterEvent(self, e: QDragEnterEvent):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e: QDropEvent):
+        paths = [u.toLocalFile() for u in e.mimeData().urls() if u.toLocalFile()]
+        if paths:
+            self._add_attachments(paths)
+
+    def closeEvent(self, event):
+        if callable(self.on_close_callback):
+            try:
+                self.on_close_callback()
+            except Exception:
+                pass
+        event.accept()
+
+
+class SimpleRexUI:
+    """Fachada simplificada con el mismo contrato que RexUI (write_log,
+    set_state, update_activity, muted, current_file, callbacks,
+    request_quit, wait_for_api_key...) para que RexController — y por lo
+    tanto la conversación de voz en vivo con Gemini Live — funcione sin
+    cambios, sobre una interfaz visual mínima."""
+
+    def __init__(self, face_path: str = "", size=None):
+        QApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
+        self._app = QApplication.instance() or QApplication(sys.argv)
+        self._app.setStyle("Fusion")
+        self._win = SimpleMainWindow(face_path)
+        self._win.show()
+        self.root = _RootShim(self._app)
+
+    @property
+    def muted(self) -> bool:
+        return self._win._muted
+
+    @muted.setter
+    def muted(self, v: bool):
+        if v != self._win._muted:
+            self._win._toggle_mute()
+
+    @property
+    def current_file(self) -> str | None:
+        files = self._win._attached_files
+        return files[-1] if files else None
+
+    @property
+    def attached_files(self) -> list[str]:
+        return self._win.get_attached_files()
+
+    @property
+    def on_text_command(self):
+        return self._win.on_text_command
+
+    @on_text_command.setter
+    def on_text_command(self, cb):
+        self._win.on_text_command = cb
+
+    @property
+    def on_setup_done(self):
+        return getattr(self._win, 'on_setup_done_callback', None)
+
+    @on_setup_done.setter
+    def on_setup_done(self, cb):
+        self._win.on_setup_done_callback = cb
+
+    @property
+    def on_permission_check(self):
+        return getattr(self._win, 'on_permission_check', None)
+
+    @on_permission_check.setter
+    def on_permission_check(self, cb):
+        self._win.on_permission_check = cb
+
+    def set_state(self, state: str):
+        self._win._state_sig.emit(state)
+
+    def write_log(self, text: str):
+        self._win._log_sig.emit(text)
+
+    def update_activity(self, instruccion: str | None = None, estado: str | None = None,
+                        progreso: int | None = None, evento: str | None = None):
+        self._win._activity_sig.emit({
+            "instruccion": instruccion,
+            "estado": estado,
+            "progreso": progreso,
+            "evento": evento,
+        })
+
+    def add_recent_web_results(self, raw_text: str):
+        self._win._web_results_sig.emit(raw_text)
+
+    def update_system_metrics(self, snap: dict):
+        self._win._metrics_sig.emit(snap)
+
+    def request_quit(self):
+        self._win._quit_sig.emit()
+
+    def set_audio_level(self, level: float):
+        """Nivel de audio (0-1) del chunk que se está reproduciendo ahora
+        mismo — anima el avatar en tiempo real mientras Rex habla."""
+        self._win._audio_level_sig.emit(float(level))
+
+    def wait_for_api_key(self):
+        # Este esqueleto no tiene overlay de configuración inicial: si falta
+        # la clave lo avisamos en la consola en vez de bloquear la UI sin
+        # forma de introducirla.
+        from core.config import get_api_key
+        if not get_api_key():
+            self.write_log(
+                "SYS ⚠️: No hay GEMINI_API_KEY configurada en config/api_keys.json. "
+                "Rex no podrá conectarse hasta que la agregues."
+            )
 
     def start_speaking(self):
         self.set_state("SPEAKING")

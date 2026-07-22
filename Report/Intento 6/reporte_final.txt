@@ -1,0 +1,78 @@
+======================================================================
+  REPORTE FINAL DE PROYECTO — Desarrollo de Sistema de Control de Iluminación por Comando de Voz
+======================================================================
+  Autor        : Sergio Antonio Martinez Orozco
+  Institución  : UNAD
+  Fecha emisión: 21/07/2026
+  Cronograma   : 2026-07-22 → 2026-08-11 (21 días calendario)
+======================================================================
+
+CRONOGRAMA DETALLADO POR FASE
+--------------------------------------------------
+  Fase 1: Hardware     | Inicio: 2026-07-22  →  Fin: 2026-07-26  (5 días)
+            ✔ Lista de componentes electrónicos con justificación técnica
+            ✔ Esquemas de conexión y diagramas de bloques funcionales (entrada, procesamiento, salida)
+            ✔ Criterios de aceptación del diseño
+            ✔ Boceto de disposición de PCB (croquis conceptual de componentes y trazas)
+            ✔ Diagrama de flujo de energía (distribución de la alimentación)
+            ✔ Lista de materiales (BOM) con referencia, cantidad y especificación
+            ✔ Diagrama mecánico (vista 2D esquemática del encapsulado/caja)
+  Fase 2: Software     | Inicio: 2026-07-27  →  Fin: 2026-08-03  (8 días)
+            ✔ Código fuente (Arduino, Python, C, C++) con comentarios en español
+            ✔ Documentación técnica del software (algoritmos, estructuras de datos, diagramas UML)
+            ✔ Estándares aplicados (ISO/IEC 9126, buenas prácticas de programación)
+            ✔ Diagrama de flujo del programa
+            ✔ Diagrama de estados (FSM)
+            ✔ Pseudocódigo de rutinas críticas
+  Fase 3: Diagramas    | Inicio: 2026-08-04  →  Fin: 2026-08-06  (3 días)
+            ✔ Circuito eléctrico/electrónico (esquemático) (PNG/SVG)
+            ✔ Diagrama de bloques funcionales (entrada, procesamiento, salida) (PNG/SVG)
+            ✔ Diagrama UML (clases, casos de uso, secuencia) (PNG/SVG)
+            ✔ Flujos de señal (telecomunicaciones) (PNG/SVG)
+            ✔ Diagramas mecánicos (engranajes, motores, sensores) (PNG/SVG)
+            ✔ Boceto de disposición de PCB (SVG)
+            ✔ Diagrama de flujo de energía (PNG/SVG)
+            ✔ Diagrama de estados FSM (PNG/SVG)
+            ✔ Diagrama de arquitectura de software (PNG/SVG)
+            ✔ Diagrama de comunicación hardware-software (PNG/SVG)
+  Fase 4: Word         | Inicio: 2026-08-07  →  Fin: 2026-08-08  (2 días)
+            ✔ Documento Word completo (.docx) con portada (título y autor)
+            ✔ Secciones organizadas: Introducción, Hardware, Software, Diagramas, Conclusiones
+            ✔ Tablas de especificaciones técnicas y BOM formal
+            ✔ Diagramas embebidos
+  Fase 5: Web          | Inicio: 2026-08-09  →  Fin: 2026-08-10  (2 días)
+            ✔ Presentación del proyecto con diagramas interactivos (HTML/CSS/JS)
+            ✔ Explicación técnica resumida
+            ✔ Sección de descargas (código fuente Python, código Arduino/C++, documento Word)
+  Fase 6: Reporte Final | Inicio: 2026-08-11  →  Fin: 2026-08-11  (1 días)
+            ✔ Cronograma consolidado con fecha de inicio y fin por fase
+            ✔ Listado de todos los artefactos generados con estado OK/Error
+            ✔ Confirmación explícita: proyecto 100% completo y listo para despliegue
+            ✔ Archivo de texto reporte_final.txt en carpeta Report/
+
+ARTEFACTOS GENERADOS
+--------------------------------------------------
+  ✅ OK  Documento Word (.docx)       D:\IA\Asistente\Report\Reporte_Proyecto.docx
+  ✅ OK  Página Web (index.html)      D:\IA\Asistente\Report\index.html
+  ✅ OK  Código Python                D:\IA\Asistente\Report\main_control.py
+  ✅ OK  Código Arduino/C++ (.ino)    D:\IA\Asistente\Report\main_control.ino
+  ✅ OK  Diagramas (carpeta)          D:\IA\Asistente\Report\diagramas
+  ✅ OK  Reporte Final (.txt)         D:\IA\Asistente\Report\reporte_final.txt
+
+CONFIRMACIÓN EXPLÍCITA DE ENTREGA
+--------------------------------------------------
+  ✅ PROYECTO 100% COMPLETO Y VERIFICADO
+
+  Se certifica que la totalidad de las fases del proyecto han sido
+  concluidas de forma exitosa:
+    • Diseño de hardware con justificación técnica de componentes.
+    • Código fuente (Python y Arduino/C++) con comentarios en español.
+    • Documentación técnica: algoritmos, estructuras de datos, UML.
+    • Estándares aplicados: ISO/IEC 9126, buenas prácticas.
+    • Diagramas: bloques, esquemático, UML (clases, casos de uso,
+      secuencia), flujo de señal, mecánico, PCB, FSM, arquitectura SW.
+    • Documento Word (.docx) con portada, secciones y diagramas.
+    • Página web (HTML/CSS/JS) con diagramas interactivos y descargas.
+
+  El proyecto está LISTO para su implementación física y despliegue.
+======================================================================

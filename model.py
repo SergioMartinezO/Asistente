@@ -180,7 +180,8 @@ class RexModel:
             try:
                 self._config_cache = json.loads(self.api_file.read_text(encoding="utf-8"))
                 return self._config_cache
-            except Exception:
+            except Exception as e:
+                print(f"[Config] ⚠️ No se pudo leer {self.api_file.name}: {e}")
                 return {}
 
     def save_config(self, key: str, os_name: str):

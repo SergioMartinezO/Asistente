@@ -6,7 +6,7 @@ TOOL_DECLARATIONS = [
         "description": (
             "Opens any application on the computer. "
             "Use this whenever the user asks to open, launch, or start any app, "
-            "website, or program. Always call this tool ÔÇö never just say you opened it."
+            "website, or program. Always call this tool — never just say you opened it."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -95,7 +95,7 @@ TOOL_DECLARATIONS = [
             "MUST be called when user asks what is on screen, what you see, "
             "analyze my screen, look at camera, etc. "
             "You have NO visual ability without this tool. "
-            "After calling this tool, stay SILENT ÔÇö the vision module speaks directly."
+            "After calling this tool, stay SILENT — the vision module speaks directly."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -119,7 +119,8 @@ TOOL_DECLARATIONS = [
             "properties": {
                 "action":      {"type": "STRING", "description": "The action to perform"},
                 "description": {"type": "STRING", "description": "Natural language description of what to do"},
-                "value":       {"type": "STRING", "description": "Optional value: volume level, text to type, etc."}
+                "value":       {"type": "STRING", "description": "Optional value: volume level, text to type, etc."},
+                "confirmed":   {"type": "STRING", "description": "Pass 'yes' to confirm a dangerous action (e.g. restart, shutdown) after the user explicitly confirms it. Omit on the first call."}
             },
             "required": []
         }
@@ -201,7 +202,7 @@ TOOL_DECLARATIONS = [
                 "output_path": {"type": "STRING", "description": "Where to save the file"},
                 "file_path":   {"type": "STRING", "description": "Path to existing file for edit/explain/run/build"},
                 "code":        {"type": "STRING", "description": "Raw code string for explain"},
-                "args":        {"type": "STRING", "description": "CLI arguments for run/build"},
+                "args":        {"type": "ARRAY", "items": {"type": "STRING"}, "description": "CLI arguments for run/build"},
                 "timeout":     {"type": "INTEGER", "description": "Execution timeout in seconds (default: 30)"},
             },
             "required": ["action"]
@@ -242,7 +243,7 @@ TOOL_DECLARATIONS = [
         "description": (
             "Executes complex multi-step tasks requiring multiple different tools. "
             "Examples: 'research X and save to file', 'find and organize files'. "
-            "DO NOT use for single commands. NEVER use for Steam/Epic ÔÇö use game_updater."
+            "DO NOT use for single commands. NEVER use for Steam/Epic — use game_updater."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -468,10 +469,10 @@ TOOL_DECLARATIONS = [
     {
     "name": "electronics",
     "description": (
-        "Resuelve c├ílculos de ingenier├¡a electr├│nica. "
-        "Usa para: Ley de Ohm, resistencias en serie/paralelo, divisor de tensi├│n, "
+        "Resuelve cálculos de ingeniería electrónica. "
+        "Usa para: Ley de Ohm, resistencias en serie/paralelo, divisor de tensión, "
         "reactancia capacitiva/inductiva, frecuencia de corte RC/RL, "
-        "conversi├│n dBm/mW, Vrms/Vpp, c├│digo de colores de resistencias, prefijos SI. "
+        "conversión dBm/mW, Vrms/Vpp, código de colores de resistencias, prefijos SI. "
         "Ejemplos: 'calcula la reactancia de un condensador de 10uF a 60Hz', "
         "'resistencia rojo rojo naranja dorado', 'convierte 100mW a dBm'."
     ),
@@ -495,7 +496,7 @@ TOOL_DECLARATIONS = [
             "vrms":        {"type": "NUMBER", "description": "Voltaje RMS"},
             "vpp":         {"type": "NUMBER", "description": "Voltaje pico a pico"},
             "bands":       {"type": "ARRAY",  "items": {"type": "STRING"}, "description": "Colores de bandas"},
-            "value":       {"type": "NUMBER", "description": "Valor num├®rico para conversi├│n SI"},
+            "value":       {"type": "NUMBER", "description": "Valor numérico para conversión SI"},
             "from_prefix": {"type": "STRING", "description": "Prefijo origen: nano, micro, mili, kilo, mega"},
             "to_prefix":   {"type": "STRING", "description": "Prefijo destino: nano, micro, mili, kilo, mega, base"}
         },
@@ -519,7 +520,22 @@ TOOL_DECLARATIONS = [
         "Salidas por defecto: D:\\IA\\Asistente\\Report\\Reporte_Proyecto.docx, index.html, main_control.py, "
         "main_control.ino, reporte_final.txt. "
         "ÚSALA cuando el usuario pida 'generar el informe técnico', 'entregables del proyecto', "
-        "'reporte de ingeniería', 'genera el Word' o variantes similares."
+        "'reporte de ingeniería', 'genera el Word' o variantes similares. "
+        "OBLIGATORIO: siempre debes construir tú mismo el parámetro 'components' con la lista real "
+        "y específica de componentes electrónicos que ese dispositivo concreto necesita (mínimo 5-10 "
+        "componentes, cada uno con especificación técnica y justificación). Esto aplica a CADA solicitud "
+        "nueva de un dispositivo distinto — nunca omitas 'components' ni reutilices genéricos de ESP32 "
+        "si el dispositivo solicitado no los usa; el listado de componentes es un entregable exigido "
+        "del reporte (punto 3 y 3.1 del entregable), no un detalle opcional. "
+        "⚠️ SOBRE EL CRONOGRAMA — LEE CON ATENCIÓN: 'project_start_date', 'phase_durations' y todas "
+        "las fechas que aparecen en el Plan del Proyecto y el diagrama de Gantt son texto SIMBÓLICO "
+        "que se muestra DENTRO del entregable, simulando el cronograma de un proyecto real de "
+        "ingeniería. NO son instrucciones de cuánto debes tardar tú en generar nada. Esta herramienta "
+        "es SÍNCRONA: al llamarla UNA vez genera TODOS los entregables (Word, HTML, diagramas, código) "
+        "de inmediato, en segundos, sin importar si el cronograma dice que el proyecto 'dura' 20 días. "
+        "Nunca esperes entre fases, nunca le digas al usuario que debe esperar días/semanas para que "
+        "el proyecto esté listo, y nunca dosifiques tu trabajo real según esas fechas — son solo "
+        "contenido del documento, no un plan de ejecución tuyo."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -528,11 +544,13 @@ TOOL_DECLARATIONS = [
             "author":             {"type": "STRING", "description": "Autor. Default: Sergio Antonio Martinez Orozco"},
             "institution":        {"type": "STRING", "description": "Institución. Default: UNAD CCAV Cúcuta"},
             "overview":           {"type": "STRING", "description": "Descripción funcional del producto/sistema (2-5 oraciones)."},
-            "project_start_date": {"type": "STRING", "description": "Fecha de inicio (YYYY-MM-DD o DD/MM/YYYY). Default: hoy."},
+            "project_start_date": {"type": "STRING", "description": "Fecha de inicio SIMBÓLICA del cronograma mostrado en el documento (normalmente hoy). No implica ninguna espera real: el reporte se genera de inmediato. Default: hoy."},
             "phase_durations": {
                 "type": "OBJECT",
                 "description": (
-                    "Duración en días por fase. Claves válidas: "
+                    "Duración SIMBÓLICA en días por fase, solo para el texto del cronograma/Gantt "
+                    "dentro del entregable — NO afecta cuánto tarda la generación real (siempre "
+                    "inmediata, en segundos). Claves válidas: "
                     "Hardware, Software, Diagramas, Word, Web, Reporte Final. "
                     "Ejemplo: {\"Hardware\": 5, \"Software\": 10, \"Reporte Final\": 1}"
                 )
@@ -546,9 +564,14 @@ TOOL_DECLARATIONS = [
                 "type": "ARRAY",
                 "items": {"type": "OBJECT"},
                 "description": (
-                    "Lista de componentes del circuito. Cada objeto: "
-                    "{nombre, especificacion, justificacion}. "
-                    "Si se omite, se usan componentes ESP32 genéricos."
+                    "OBLIGATORIO — nunca lo omitas. Lista real de los componentes electrónicos "
+                    "específicos que este dispositivo concreto necesita (no genéricos). Cada objeto: "
+                    "{nombre, especificacion, justificacion}. Ejemplo para un sensor de humedad: "
+                    "{\"nombre\": \"Sensor capacitivo de humedad de suelo v1.2\", "
+                    "\"especificacion\": \"3.3-5V, salida analógica 0-3V\", "
+                    "\"justificacion\": \"Resistente a la corrosión frente a sensores resistivos\"}. "
+                    "Si el dispositivo es genérico y no tienes certeza de un componente exacto, "
+                    "usa el más representativo de su categoría, pero NUNCA dejes este campo vacío."
                 )
             },
             "hardware_items": {
@@ -574,13 +597,13 @@ TOOL_DECLARATIONS = [
             "diagram_dir":    {"type": "STRING", "description": "Carpeta para diagramas PNG/SVG. Default: D:\\IA\\Asistente\\Report\\diagramas"},
             "version":        {"type": "STRING", "description": "Versión del documento. Default: v1.0"}
         },
-        "required": ["project_title"]
+        "required": ["project_title", "components"]
     }
 },
 {
     "name": "datasheet_finder",
     "description": (
-        "Busca datasheets y especificaciones t├®cnicas de componentes electr├│nicos. "
+        "Busca datasheets y especificaciones técnicas de componentes electrónicos. "
         "Usa para: buscar datasheet de cualquier componente, CI, transistor, sensor, "
         "microcontrolador, etc. Abre el navegador con los resultados. "
         "Ejemplos: 'busca el datasheet del NE555', "
@@ -589,7 +612,7 @@ TOOL_DECLARATIONS = [
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "component": {"type": "STRING", "description": "Nombre o n├║mero de parte del componente (ej: NE555, LM741, BC547, ATmega328)"},
+            "component": {"type": "STRING", "description": "Nombre o número de parte del componente (ej: NE555, LM741, BC547, ATmega328)"},
             "action":    {"type": "STRING", "description": "search (default) | pdf | alldatasheet | digikey | mouser | octopart"},
         },
         "required": ["component"]
@@ -598,24 +621,24 @@ TOOL_DECLARATIONS = [
 {
     "name": "dev_tools",
     "description": (
-        "Herramientas de ingenier├¡a de software y sistemas. "
-        "Usa para: complejidad Big-O de algoritmos, patrones de dise├▒o, "
-        "estructuras de datos, conversi├│n de bases num├®ricas, conceptos de redes, "
-        "bases de datos. Ejemplos: 'complejidad de merge sort', 'patr├│n singleton', "
-        "'convierte 255 de decimal a binario', 'qu├® es TCP vs UDP'."
+        "Herramientas de ingeniería de software y sistemas. "
+        "Usa para: complejidad Big-O de algoritmos, patrones de diseño, "
+        "estructuras de datos, conversión de bases numéricas, conceptos de redes, "
+        "bases de datos. Ejemplos: 'complejidad de merge sort', 'patrón singleton', "
+        "'convierte 255 de decimal a binario', 'qué es TCP vs UDP'."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "action": {"type": "STRING", "description": "big_o | patron_diseno | estructura_datos | conversion_base | pseudocodigo | redes | base_datos"},
             "algorithm": {"type": "STRING", "description": "Nombre del algoritmo para big_o"},
-            "pattern": {"type": "STRING", "description": "Nombre del patr├│n para patron_diseno"},
+            "pattern": {"type": "STRING", "description": "Nombre del patrón para patron_diseno"},
             "structure": {"type": "STRING", "description": "Nombre de estructura para estructura_datos"},
-            "value": {"type": "STRING", "description": "Valor para conversi├│n de base"},
+            "value": {"type": "STRING", "description": "Valor para conversión de base"},
             "from_base": {"type": "INTEGER", "description": "Base origen (2, 8, 10, 16)"},
             "to_base": {"type": "INTEGER", "description": "Base destino (2, 8, 10, 16)"},
             "topic": {"type": "STRING", "description": "Tema para redes o base_datos"},
-            "description": {"type": "STRING", "description": "Descripci├│n para pseudocodigo"},
+            "description": {"type": "STRING", "description": "Descripción para pseudocodigo"},
         },
         "required": ["action"]
     }
@@ -623,11 +646,11 @@ TOOL_DECLARATIONS = [
 {
     "name": "mechatronics",
     "description": (
-        "Resuelve c├ílculos de mecatr├│nica e ingenier├¡a mec├ínica, incluyendo cinem├ítica inversa y sintonizaci├│n PID. "
-        "Usa para: torque, potencia mec├ínica, conversi├│n RPM/rad┬ÀsÔü╗┬╣, "
-        "relaciones de transmisi├│n, cinem├ítica lineal, cinem├ítica inversa de brazo de 2-DOF, sintonizaci├│n de lazo cerrado PID, "
+        "Resuelve cálculos de mecatrónica e ingeniería mecánica, incluyendo cinemática inversa y sintonización PID. "
+        "Usa para: torque, potencia mecánica, conversión RPM/rad/s, "
+        "relaciones de transmisión, cinemática lineal, cinemática inversa de brazo de 2-DOF, sintonización de lazo cerrado PID, "
         "info de motores DC/servo/stepper/BLDC, sensores (HC-SR04, DHT22, MPU-6050, encoders), Arduino (PWM, I2C, SPI). "
-        "Ejemplos: 'calcula la cinem├ítica inversa para brazo en (10, 5)', 'sintoniza un PID con kp=2, ki=0.5, kd=0.1', "
+        "Ejemplos: 'calcula la cinemática inversa para brazo en (10, 5)', 'sintoniza un PID con kp=2, ki=0.5, kd=0.1', "
         "'potencia de motor a 1500 RPM', 'info del sensor ultrasonico'."
     ),
     "parameters": {
@@ -636,7 +659,7 @@ TOOL_DECLARATIONS = [
             "action": {"type": "STRING", "description": "torque | potencia | rpm_rad | transmision | cinematica | motor_info | sensor_info | arduino | pid_tuning | cinematica_inversa"},
             "force": {"type": "NUMBER", "description": "Fuerza en Newton"},
             "distance": {"type": "NUMBER", "description": "Distancia en metros"},
-            "torque": {"type": "NUMBER", "description": "Torque en N┬Àm"},
+            "torque": {"type": "NUMBER", "description": "Torque en N·m"},
             "rpm": {"type": "NUMBER", "description": "Velocidad angular en RPM"},
             "rad_s": {"type": "NUMBER", "description": "Velocidad angular en rad/s"},
             "velocity": {"type": "NUMBER", "description": "Velocidad lineal en m/s"},
@@ -645,7 +668,7 @@ TOOL_DECLARATIONS = [
             "rpm_input": {"type": "NUMBER", "description": "RPM de entrada para transmision"},
             "v0": {"type": "NUMBER", "description": "Velocidad inicial m/s"},
             "vf": {"type": "NUMBER", "description": "Velocidad final m/s"},
-            "acceleration": {"type": "NUMBER", "description": "Aceleraci├│n m/s┬▓"},
+            "acceleration": {"type": "NUMBER", "description": "Aceleración m/s²"},
             "time": {"type": "NUMBER", "description": "Tiempo en segundos"},
             "motor_type": {"type": "STRING", "description": "dc | paso a paso | servo | bldc"},
             "sensor_type": {"type": "STRING", "description": "ultrasonico | temperatura | infrarrojo | acelerometro | encoder"},
@@ -654,12 +677,12 @@ TOOL_DECLARATIONS = [
             "ki": {"type": "NUMBER", "description": "Ganancia integral Ki para PID"},
             "kd": {"type": "NUMBER", "description": "Ganancia derivativa Kd para PID"},
             "setpoint": {"type": "NUMBER", "description": "Valor deseado de referencia (default: 1.0)"},
-            "duration": {"type": "NUMBER", "description": "Duraci├│n de la simulaci├│n en segundos (default: 5.0)"},
+            "duration": {"type": "NUMBER", "description": "Duración de la simulación en segundos (default: 5.0)"},
             "dt": {"type": "NUMBER", "description": "Intervalo de muestreo temporal dt en segundos (default: 0.02)"},
-            "x": {"type": "NUMBER", "description": "Coordenada X objetivo para cinem├ítica inversa"},
-            "y": {"type": "NUMBER", "description": "Coordenada Y objetivo para cinem├ítica inversa"},
-            "l1": {"type": "NUMBER", "description": "Longitud del eslab├│n 1 del brazo rob├│tico"},
-            "l2": {"type": "NUMBER", "description": "Longitud del eslab├│n 2 del brazo rob├│tico"},
+            "x": {"type": "NUMBER", "description": "Coordenada X objetivo para cinemática inversa"},
+            "y": {"type": "NUMBER", "description": "Coordenada Y objetivo para cinemática inversa"},
+            "l1": {"type": "NUMBER", "description": "Longitud del eslabón 1 del brazo robótico"},
+            "l2": {"type": "NUMBER", "description": "Longitud del eslabón 2 del brazo robótico"},
         },
         "required": ["action"]
     }
@@ -667,12 +690,12 @@ TOOL_DECLARATIONS = [
 {
     "name": "materials_science",
     "description": (
-        "Resuelve problemas y c├ílculos de ciencia de materiales. "
-        "Usa para: esfuerzo mec├ínico, deformaci├│n unitaria, Ley de Hooke, "
-        "esfuerzo t├®rmico por cambios de temperatura y consulta de base de datos "
+        "Resuelve problemas y cálculos de ciencia de materiales. "
+        "Usa para: esfuerzo mecánico, deformación unitaria, Ley de Hooke, "
+        "esfuerzo térmico por cambios de temperatura y consulta de base de datos "
         "de propiedades de materiales industriales comunes (aluminio, acero, cobre, silicio, titanio). "
         "Ejemplos: 'calcula el esfuerzo si se aplica 5000N sobre 10mm2', "
-        "'esfuerzo t├®rmico de barra de acero de 20 a 100 grados', "
+        "'esfuerzo térmico de barra de acero de 20 a 100 grados', "
         "'propiedades del titanio grado 5'."
     ),
     "parameters": {
@@ -680,14 +703,14 @@ TOOL_DECLARATIONS = [
         "properties": {
             "action": {"type": "STRING", "description": "esfuerzo_deformacion | esfuerzo_termico | seleccion_materiales"},
             "load": {"type": "NUMBER", "description": "Fuerza de carga en Newtons (N)"},
-            "area": {"type": "NUMBER", "description": "├ürea de secci├│n transversal"},
+            "area": {"type": "NUMBER", "description": "Área de sección transversal"},
             "area_unit": {"type": "STRING", "description": "mm2 (default) | m2"},
             "length": {"type": "NUMBER", "description": "Longitud inicial L0"},
-            "delta_length": {"type": "NUMBER", "description": "Cambio de longitud (deformaci├│n)"},
+            "delta_length": {"type": "NUMBER", "description": "Cambio de longitud (deformación)"},
             "length_unit": {"type": "STRING", "description": "mm (default) | m"},
-            "young_modulus": {"type": "NUMBER", "description": "M├│dulo de Young (E) en GPa"},
-            "alpha": {"type": "NUMBER", "description": "Coeficiente de expansi├│n lineal lineal x 10^-6 / ┬░C"},
-            "delta_temp": {"type": "NUMBER", "description": "Gradiente de temperatura en ┬░C"},
+            "young_modulus": {"type": "NUMBER", "description": "Módulo de Young (E) en GPa"},
+            "alpha": {"type": "NUMBER", "description": "Coeficiente de expansión lineal x 10^-6 / °C"},
+            "delta_temp": {"type": "NUMBER", "description": "Gradiente de temperatura en °C"},
             "material_name": {"type": "STRING", "description": "Nombre del material (ej: aluminio 6061-t6, acero aisi 1020, cobre, silicio, titanio grado 5)"}
         },
         "required": ["action"]
@@ -696,8 +719,8 @@ TOOL_DECLARATIONS = [
 {
     "name": "proteus_automation",
     "description": (
-        "Automatiza la simulaci├│n de circuitos en Proteus VSM. "
-        "Abre el archivo de dise├▒o de circuito, inicia la simulaci├│n activa durante "
+        "Automatiza la simulación de circuitos en Proteus VSM. "
+        "Abre el archivo de diseño de circuito, inicia la simulación activa durante "
         "un tiempo determinado y cierra el programa de manera limpia."
     ),
     "parameters": {
@@ -706,7 +729,7 @@ TOOL_DECLARATIONS = [
             "action": {"type": "STRING", "description": "simulate (default)"},
             "dsn_path": {"type": "STRING", "description": "Ruta completa del archivo .DSN del circuito. Omitir para valor predeterminado."},
             "exe_path": {"type": "STRING", "description": "Ruta del ejecutable de Proteus BIN\\PDS.EXE. Omitir para valor predeterminado."},
-            "duration": {"type": "NUMBER", "description": "Duraci├│n de la simulaci├│n activa en segundos (default: 12.0)"}
+            "duration": {"type": "NUMBER", "description": "Duración de la simulación activa en segundos (default: 12.0)"}
         },
         "required": []
     }
@@ -715,7 +738,7 @@ TOOL_DECLARATIONS = [
     "name": "ltspice_automation",
     "description": (
         "Ejecuta simulaciones en lote de LTspice y extrae resultados del archivo .log. "
-        "Usa esto para validar circuitos en lote sin abrir la interfaz gr├ífica."
+        "Usa esto para validar circuitos en lote sin abrir la interfaz gráfica."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -723,6 +746,41 @@ TOOL_DECLARATIONS = [
             "action": {"type": "STRING", "description": "simulate (default)"},
             "asc_path": {"type": "STRING", "description": "Ruta del archivo .asc de LTspice. Omitir para buscar en el Escritorio."},
             "exe_path": {"type": "STRING", "description": "Ruta del ejecutable de LTspice (por ejemplo, LTspice.exe o XVIIist.exe). Omitir para autodetectar."}
+        },
+        "required": []
+    }
+},
+{
+    "name": "matlab_link",
+    "description": (
+        "Automatiza simulaciones de sistemas LTI y genera diagramas de Bode o Nyquist con MATLAB "
+        "(o SciPy como motor alternativo si MATLAB no está disponible). "
+        "Usa para: analizar la respuesta en frecuencia de una función de transferencia. "
+        "Ejemplos: 'grafica el diagrama de Bode de H(s) = 1/(s+1)', 'genera el Nyquist con num=[1] den=[1,2,1]'."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "num": {"type": "ARRAY", "items": {"type": "NUMBER"}, "description": "Coeficientes del numerador de la función de transferencia, de mayor a menor grado (default: [1.0])"},
+            "den": {"type": "ARRAY", "items": {"type": "NUMBER"}, "description": "Coeficientes del denominador de la función de transferencia, de mayor a menor grado (default: [1.0, 1.0])"},
+            "plot_type": {"type": "STRING", "description": "bode (default) | nyquist"}
+        },
+        "required": []
+    }
+},
+{
+    "name": "mecatronic_link",
+    "description": (
+        "Lee o escribe datos a microcontroladores (Arduino/ESP32) conectados por puerto serie. "
+        "Usa para: enviar un comando a hardware conectado, o leer telemetría/sensores en tiempo real. "
+        "Ejemplos: 'envía el comando LED_ON al Arduino en COM3', 'lee la telemetría del puerto serie'."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "port": {"type": "STRING", "description": "Puerto serie (ej: COM3 en Windows, /dev/ttyUSB0 en Linux). Default: COM3"},
+            "baudrate": {"type": "INTEGER", "description": "Velocidad en baudios (default: 9600)"},
+            "command": {"type": "STRING", "description": "Comando a enviar. Si se omite, se leen líneas de telemetría en su lugar."}
         },
         "required": []
     }

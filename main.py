@@ -2,7 +2,7 @@ from core.tool_declarations import TOOL_DECLARATIONS as _ALL_TOOL_DECLARATIONS
 
 
 
-from ui import RexUI
+from ui import RexUI, SimpleRexUI
 from core.dependency_check import check_project_dependencies, build_install_command
 
 import google.genai as genai
@@ -28,6 +28,17 @@ if sys.platform.startswith("win"):
     os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "0"
     os.environ["QT_SCALE_FACTOR"] = "1"
+
+    # El proyecto usa emojis en logs y prints (✅, ⚠️, 🎙️, etc.). La consola
+    # de Windows no siempre arranca en UTF-8 (cp1252/OEM según configuración
+    # regional o cómo se lance el proceso), lo que hace que cualquier
+    # print() con un emoji lance UnicodeEncodeError y tumbe el proceso.
+    # Forzamos UTF-8 en stdout/stderr para que esto nunca ocurra.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Evita que Python escriba archivos .pyc o carpetas __pycache__ durante esta ejecución
@@ -228,7 +239,11 @@ def main():
     from controller import RexController
 
     # 1. Crear Vista (RexUI)
-    ui = RexUI("face.png")
+    # UI activa: esqueleto simplificado (consola + input + voz + CPU/RAM),
+    # conectado al mismo RexController con conversación de voz en vivo por
+    # Gemini Live. Para volver a la UI completa (panel de actividad,
+    # telemetría extendida, resultados web, drag & drop), usa: RexUI("face.png")
+    ui = SimpleRexUI("face.png")
 
     # 2. Crear Modelo (RexModel)
     model = RexModel()

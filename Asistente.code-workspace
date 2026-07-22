@@ -8,5 +8,10 @@
 		"chat.tools.terminal.autoApprove": {
 			"D:\\IA\\Asistente\\venv\\Scripts\\python.exe": true
 		}
+	},
+	"extensions": {
+		"recommendations": [
+			"anthropic.claude-code"
+		]
 	}
 }
